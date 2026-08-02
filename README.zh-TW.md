@@ -4,7 +4,7 @@
 
 [English](README.md) · **繁體中文**
 
-![lecture-to-notes — 把影片、錄音、投影片、照片變成結構化、可回溯的筆記](docs/assets/hero.png)
+![lecture-to-notes — 把影片、錄音、投影片、照片變成結構化、可回溯的筆記](docs/assets/hero.zh.png)
 
 把演講／研討會錄影變成有投影片、可回溯的結構化筆記，並輸出招牌的
 **同步 HTML 檢視頁**：影片、逐字稿、總整理在同一頁呈現——影片播到哪，
@@ -28,6 +28,14 @@ LLM 只在最後一步負責寫，而且只能根據前面產生的證據寫。
 對上，想看哪段就跳到哪段——畢竟真正想知道的，是動態下到底怎麼操作！於是變成
 現在的形式：總整理拿來讀、逐字稿拿來驗證、影片永遠在一鍵之外。
 
+## 手上有什麼就帶什麼來
+
+真實的課程從來不會只有一支乾淨的錄影：有的講題你錄了影、有的只錄到音、
+有的只用手機拍了投影片，會後主辦單位又補發一份 PDF 講義。這條管線把資料夾
+**原樣**吃進去：`route_inputs.py` 判斷每個檔案扮演什麼角色，對齊階段再把所有
+來源接上**同一條時間軸**——就算某張投影片從頭到尾沒出現在影片畫面裡，
+筆記引用到它的那一刻仍然指得回正確的時間點。
+
 ## 同步 HTML 檢視頁：影片、逐字稿、總整理同一頁
 
 招牌輸出。`export_web.py` 為每門課產生**單一自包含 HTML 頁**，三樣東西雙向同步：
@@ -41,6 +49,14 @@ LLM 只在最後一步負責寫，而且只能根據前面產生的證據寫。
 - **離線可分享**：一個 `.html` 加一個素材資料夾（瀏覽器可播的影片、
   友善命名的投影片、markdown 與 PDF 副本）。不用架伺服器，把資料夾傳給
   對方，點兩下就能看。`--compress` 可產生較小的 H.264 分享包。
+
+實際輸出（一場頸椎超音波工作坊；日期與講者已馬賽克）：
+
+![同步檢視——總整理與逐字稿索引並排，浮動影片視窗可拖曳，高亮條目跟著影片走](docs/assets/viewer-sync.png)
+
+| 課程首頁——每段的長度與一句話重點 | 總整理頁——影片代號表與臨床 pearls |
+|---|---|
+| ![課程首頁](docs/assets/viewer-home.png) | ![總整理頁](docs/assets/viewer-summary.png) |
 
 檢視頁的 UI 在 `scripts/layout2/`（`viewer.css`、`viewer.js`）；
 `export_web.py` 只負責產生時間軸 manifest 和同步筆記 HTML——改 UI 是改資產檔，
@@ -86,7 +102,15 @@ OCR 兩階段（RapidOCR 快篩 → Surya 精讀）、本地 VLM 判讀投影片
 
 - Windows 11 實測（NVIDIA RTX 3070 Ti 8GB）。Linux/macOS 理論上可行但未測。
 - Python 3.12、`ffmpeg` 與 `ffprobe` 必須在 PATH。
-- 建議 NVIDIA GPU 8GB 以上；純 CPU 可跑，但一小時的課會從幾分鐘變成幾小時。
+- **NVIDIA GPU（8GB 以上）是快速路徑，不是硬需求。**沒有的話：
+  - **CPU fallback 內建**——轉錄自動降到 CPU int8，開跑前先誠實印出預估時間
+    （一小時的課會從幾分鐘變成幾小時）。OCR 快篩階段本來就對 CPU 友善。
+  - **轉錄外包給雲端 Whisper**——`scripts/groq_asr.py` 把壓縮後的音訊送
+    Groq 的 `whisper-large-v3-turbo`（免費層可用；25 MB 上限自動分段），
+    回傳格式與本機路徑完全相容。先讀它的 docstring：雲端版對中英混講的
+    防崩潰參數全都沒有，而且音訊會離開你的電腦——機密錄音別走這條。
+  - **Apple Silicon** 理論上以 CPU 模式可行（faster-whisper 走 CPU、
+    ollama 原生支援 macOS）——合理但未實測，歡迎回報。
 - 選配：ollama + `minicpm-v:8b`（Stage D）、獨立 venv 的 Surya（高品質 OCR）、
   pandoc（網頁／PDF 匯出）。
 - 8GB 顯卡上 GPU 階段必須序列化：Whisper 和 VLM 不能同時跑，抽幀也不能和轉錄

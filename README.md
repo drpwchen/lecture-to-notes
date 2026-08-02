@@ -35,6 +35,16 @@ you actually want to know is *how the maneuver is performed* — and that only
 lives in motion. So the summary is for studying, the transcript is for
 verifying, and the video is one click away from both.
 
+## Bring whatever you captured
+
+Real courses never produce one tidy recording. Some talks you filmed, some you
+only audio-recorded, for some you photographed the slides with your phone, and
+sometimes the organizer hands out a PDF deck afterwards. This pipeline takes
+the folder **as-is**: `route_inputs.py` figures out what role each file plays,
+and the alignment stage stitches every source onto **one shared timeline** —
+so the finished note cites the right slide at the right moment even when that
+slide never appeared inside the video.
+
 ---
 
 ## What it does
@@ -91,6 +101,15 @@ summary notes are presented **together and kept in sync both ways**:
   step for the reader — send the folder, they double-click the page.
   `--compress` produces a smaller H.264 set for handing around.
 
+Real output from a cervical-ultrasound workshop (dates and speaker names
+blurred):
+
+![Synced view — summary and transcript index with a draggable floating player; the highlighted bullet follows the video](docs/assets/viewer-sync.png)
+
+| Course hub — every segment with duration and a one-line hook | Summary view — per-video source table and key pearls |
+|---|---|
+| ![Course hub page](docs/assets/viewer-home.png) | ![Summary view](docs/assets/viewer-summary.png) |
+
 The viewer UI lives in `scripts/layout2/` (`viewer.css`, `viewer.js`);
 `export_web.py` only generates the per-course timeline manifest and the synced
 note HTML, so a UI tweak is an asset edit, not a generator change.
@@ -143,8 +162,18 @@ Honest version:
 - **Tested on Windows 11** with an NVIDIA RTX 3070 Ti (8 GB). Nothing is
   Windows-specific by design, but Linux/macOS are untested.
 - **Python 3.12**
-- **NVIDIA GPU, 8 GB+ recommended.** It runs on CPU; a 60-minute lecture then
-  takes hours instead of minutes.
+- **An NVIDIA GPU (8 GB+) is the fast path, not a requirement.** Without one:
+  - **CPU fallback is built in** — transcription drops to int8 on CPU
+    automatically and prints an honest ETA first (a 60-minute lecture takes
+    hours instead of minutes). The OCR triage stage is CPU-friendly already.
+  - **Offload transcription to a hosted Whisper** — `scripts/groq_asr.py`
+    sends compressed audio to Groq's `whisper-large-v3-turbo` (free tier
+    works; the 25 MB request cap is handled by chunking) and returns the same
+    segment format as the local path. Read its docstring first: hosted Whisper
+    has no anti-collapse knobs for heavily code-switched audio, and anything
+    you send leaves your machine — don't route confidential recordings there.
+  - **Apple Silicon** should work in CPU mode (faster-whisper on CPU, ollama
+    is native on macOS) — plausible but untested; reports welcome.
 - **`ffmpeg` and `ffprobe` on PATH** — not optional.
 - Optional: [ollama](https://ollama.com) with `minicpm-v:8b` for Stage D slide
   semantics; a separate venv with [Surya](https://github.com/VikParuchuri/surya)
