@@ -1,0 +1,33 @@
+# lecture-to-notes — base dependencies (Python 3.12).
+#
+#     pip install -r requirements.txt
+#
+# Optional extras live in requirements-optional.txt; each one degrades LOUDLY
+# (the pipeline tells you what it lost and gates the stage) rather than silently
+# producing worse output. That is deliberate — see docs/AUDIT_SUMMARY.md.
+#
+# Not installable by pip, required on PATH:
+#   ffmpeg, ffprobe    audio extraction, frame extraction, web export
+#   ollama             Stage D VLM signals (`ollama pull minicpm-v:8b`)
+#   pandoc             only for `export_web.py` PDF/HTML rendering
+
+# --- Transcription (Stage 0) ---
+faster-whisper>=1.0
+
+# --- OCR (Stage B) ---
+# The RapidOCR result shape changed between major versions (tuple vs object).
+# _common.rapidocr_text normalizes BOTH, so this is intentionally not pinned to
+# one API generation. If you see an unpack error, open an issue with the version.
+rapidocr-onnxruntime>=1.3
+
+# --- Imaging / slides ---
+Pillow>=10.0
+numpy>=1.24
+PyMuPDF>=1.24          # `fitz` — PDF page render + text extraction (Path B, N-up crop)
+ImageHash>=4.3         # perceptual hashing for adjacent-frame dedup
+
+# --- Text / config / HTTP ---
+pyyaml>=6.0            # config.yaml
+rapidfuzz>=3.0         # transcript<->slide grounding, ASR suspect matching
+requests>=2.31         # ollama HTTP API, optional Groq offload
+json-repair>=0.25      # salvages truncated VLM JSON instead of dropping the slide

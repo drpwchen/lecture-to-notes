@@ -1,0 +1,9 @@
+# The two wordlists here ARE tracked in this repo -- they are frequency lists of
+# ordinary dictionary words and acronyms, used to decide whether an ASR token is
+# a real word. Regenerate from your own corpus with scripts/build_real_words.py
+# if you want lists tuned to your domain.
+#
+# (Upstream, these files are generated per-machine and deliberately untracked;
+# the shipped copies are the deliberate exception. -- tools/sync_from_skill.py)
+__pycache__/
+*.pyc

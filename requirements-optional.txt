@@ -1,0 +1,25 @@
+# Optional extras. Everything here is genuinely optional: the pipeline detects
+# the absence, says so, and gates the affected stage.
+#
+#     pip install -r requirements-optional.txt
+#
+# NOTE on Surya (Stage B2 high-quality OCR): do NOT install it into this
+# environment. It pulls torch and its own transformers pin, which collide with
+# the base set. Give it its own venv and point `ocr_engine.surya_python` in
+# config.yaml at that interpreter — the pipeline runs it as a subprocess:
+#
+#     uv venv /path/to/surya-venv --python 3.12
+#     uv pip install --python /path/to/surya-venv/bin/python \
+#         torch --index-url https://download.pytorch.org/whl/cu124
+#     uv pip install --python /path/to/surya-venv/bin/python surya-ocr pillow
+#
+# Leave `surya_python` blank and Stage B2 falls back to RapidOCR, loudly.
+
+scikit-image>=0.22     # SSIM for Stage C layout-based dedup. Without it, layout
+                       # merging is DISABLED (not degraded) and you simply get more
+                       # canonical slides. The old histogram fallback rated
+                       # same-template white slides ~0.95 similar and collapsed
+                       # ~120 distinct frames into ~5 — a wrong merge deletes
+                       # content, a missed merge only costs a duplicate.
+pillow-heif>=0.16      # read iPhone .HEIC photos as slide sources
+psutil>=5.9            # richer process/memory telemetry in the run logs

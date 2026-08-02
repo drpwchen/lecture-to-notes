@@ -1,0 +1,309 @@
+# lecture-to-notes skill configuration — EXAMPLE / template
+# Copy to config.yaml and fill in the machine-specific values marked below.
+# Every blanked ('') value is optional: an env var overrides it, and when both
+# are empty the pipeline degrades gracefully rather than failing.
+# Edit weights/thresholds here without touching code. Synthesis (Stage F) reads this.
+#
+# Machine-specific paths live under `paths:` below — see config.example.yaml for a
+# blank copy to start from on a new machine.
+
+paths:
+  # All optional. Resolution order for each: env var -> this file -> built-in default/None.
+  # LECTURE_PAUSE_FLAG — cooperative GPU pause: while this file exists, GPU stages
+  # wait (bounded) so two CUDA jobs never collide. Empty/missing => feature disabled.
+  pause_flag: ''  # e.g. /path/to/batch/_PAUSE — empty => pause feature disabled
+  # LECTURE_WHISPER_MODEL_DIR — where locally converted faster-whisper models live.
+  # Empty/missing => aliases containing {whisper_model_dir} are unusable and the
+  # HF hub names (e.g. large-v3) are the way to go.
+  whisper_model_dir: ''  # e.g. /models/whisper — empty => use HF hub names like large-v3
+
+models:
+  # Alias -> model path or Hugging Face hub name, consumed by _common.resolve_model.
+  aliases:
+    breeze25: '{whisper_model_dir}/breeze-asr-25-ct2'
+    large-v3: 'large-v3'   # HF hub name, auto-downloaded by faster-whisper
+
+# Stage C dedup (dedup_semantic.py). ui_chrome_tokens = screen-share interface
+# text that pollutes RapidOCR quick_text on conference-recorded lectures; any
+# quick_text LINE containing one of these tokens is dropped before quick_text
+# length is used to pick a group's canonical frame (so the frame with the most
+# UI noise doesn't win over the one with the most slide content). Add Teams/Meet/
+# WebEx chrome here without editing code (WP1-6, 2026-07-09). Empty/omitted → the
+# built-in Zoom default in dedup_semantic._DEFAULT_UI_CHROME_TOKENS.
+dedup:
+  ui_chrome_tokens:
+    - 聊天
+    - 劇天
+    - 人員
+    - 舉手
+    - 最手
+    - 翠手
+    - 卑手
+    - 取得控制權
+    - 控制權
+    - 檢視
+    - 检视
+    - 照相機
+    - 照相格
+    - 照相
+    - 簽到
+    - 保密
+    - 視訊
+    - 麥克風
+    - 共享
+    - 邀請
+    - 錄製
+    - 反應
+    - 暫停
+    - 結束會議
+    - 停止共享
+    - 新的共享
+    - 多雲
+    - 時睛
+    - 未證
+    - 靜音
+    - 解除
+
+scoring:
+  # Each weight applies to the matching transcript_signals or vlm_signals field.
+  # combined_score starts as sum(weight * signal), then add bonuses + penalties, clip to [0, 1].
+  weights:
+    visual_complexity: 0.15                   # vlm_signals.visual_complexity
+    non_textual_information_density: 0.25     # vlm_signals.non_textual_information_density
+    speaker_reference_density: 0.30           # transcript_signals.speaker_reference_density
+    speaker_emphasis_score: 0.15              # transcript_signals.speaker_emphasis_score
+    time_spent_normalized: 0.15               # min(transcript_signals.time_spent_seconds / 120, 1.0)
+
+  penalties:
+    speaker_skip_score: -0.30                 # multiplied by transcript_signals.speaker_skip_score
+    speaker_confusion_score: -0.20            # multiplied by transcript_signals.speaker_confusion_score
+    text_redundancy_threshold: 0.7            # if vlm_signals.text_redundancy > this, apply penalty
+    text_redundancy_penalty: -0.20
+
+  # Added to raw score for each matching content_type. Use `t in vlm_signals.content_type`, not equality.
+  content_type_bonuses:
+    flowchart: 0.15
+    kaplan_meier: 0.15
+    ultrasound: 0.10
+    xray: 0.10
+    mri: 0.10
+    anatomy: 0.08
+    scatter_plot: 0.08
+    decorative: -0.40
+
+  tier_thresholds:
+    tier_1: 0.65
+    tier_2: 0.40
+
+  hard_overrides:
+    # If any item in this list appears in vlm_signals.apparent_educational_function,
+    # force tier 1 regardless of combined_score. Sets tier_override_reason.
+    force_tier_1_if_function_includes:
+      - diagnostic_algorithm
+      - treatment_protocol
+      - staging_schema
+
+    # If vlm_signals.content_type set equals ONLY this list (no other types), force tier 3.
+    # Set as list-of-lists so YAML keeps each variant distinct.
+    force_tier_3_if_content_type_only_set:
+      - [decorative]
+      - [title]
+      - [title, decorative]
+
+keyword_grounding:
+  # Short abbreviations (≤4 chars + ALL_CAPS) use exact + word-boundary match only.
+  # Add medical abbreviations frequently seen in PMR / board-exam topics here.
+  abbreviation_whitelist:
+    - ALS
+    - ADHD
+    - CPET
+    - RTC
+    - ROM
+    - DTR
+    - ABI
+    - CMAP
+    - NCS
+    - EMG
+    - MRI
+    - CT
+    - US
+    - PT
+    - OT
+    - ST
+    - ESWT
+    - TENS
+    - NMES
+    - FES
+    - FIM
+    - MMT
+    - COPD
+    - ILD
+    - HFrEF
+    - HFpEF
+    - VO2
+    - VE
+    - AT
+    - TNM
+    - DVT
+    - PE
+    - SCI
+    - TBI
+    - ALS
+    - CP
+    - DMD
+
+  # Suffix-based heuristics for keyword classification (case-insensitive).
+  drug_suffixes:
+    - mab
+    - inib
+    - statin
+    - pril
+    - prazole
+    - olol
+    - sartan
+    - pine
+    - gliflozin
+    - parin
+
+  medical_term_suffixes:
+    - itis
+    - oma
+    - pathy
+    - osis
+    - ectomy
+    - plasty
+    - algia
+    - emia
+    - rhea
+    - centesis
+
+  # Domain mapping: keyword → vault tag.
+  # First-match wins; lowercase comparison.
+  clinical_domain_map:
+    msk:
+      - rotator
+      - tendon
+      - shoulder
+      - knee
+      - hip
+      - spine
+      - sacroiliac
+      - muscle
+      - bursitis
+      - sprain
+      - strain
+      - fracture
+    neuro:
+      - stroke
+      - parkinson
+      - als
+      - sci
+      - tbi
+      - cerebral
+      - neuropathy
+      - radiculopathy
+      - dementia
+      - epilepsy
+    cardio:
+      - heart
+      - cardiac
+      - hfref
+      - hfpef
+      - ischemic
+      - mi
+      - arrhythmia
+    cpet:
+      - vo2
+      - ve
+      - cpet
+      - anaerobic threshold
+      - wasserman
+    pulm:
+      - copd
+      - ild
+      - asthma
+      - pulmonary
+      - respiratory
+    peds:
+      - cerebral palsy
+      - dmd
+      - adhd
+      - autism
+      - pediatric
+    ultrasound:
+      - sonography
+      - ultrasound
+      - msk us
+      - sono
+    onco:
+      - cancer
+      - tumor
+      - tnm
+      - radiation
+      - chemo
+      - oncology
+
+  emphasis_cues_zh:
+    - 重要
+    - 最重要
+    - 核心
+    - 記住
+    - 注意
+    - 千萬
+    - 關鍵
+    - 重點
+    - 一定要
+
+  emphasis_cues_en:
+    - key point
+    - important
+    - remember
+    - critical
+    - essential
+    - must
+    - absolutely
+    - takeaway
+    - highlight
+    - decision making
+
+  confusion_cues:
+    - 跳過
+    - skip
+    - let's move on
+    - 不重要
+    - next slide
+    - 等一下回來
+    - back to
+    - 我們先看
+    - abandon
+    - 忽略
+
+# Stage B2 — high-quality OCR (Surya). Runs AFTER dedup on canonical, text-bearing
+# slides only. RapidOCR (Stage B quick_ocr.py) stays as the cheap triage pass that
+# feeds dedup + entropy + the skip gate. See reference/decisions.md#ocr-benchmark
+# for the benchmark that chose Surya. Keep the fallback SHALLOW (surya -> rapidocr);
+# no ensemble/voting.
+ocr_engine:
+  engine: surya
+  # Machine-specific interpreter for the Surya venv. CONTRACT (2026-08-02): a missing
+  # or non-existent file is NOT fatal — ocr_surya degrades to the `fallback` engine
+  # below instead of exiting 2, so the pipeline still runs on a machine without Surya.
+  surya_python: ''  # python.exe inside your Surya venv — empty => falls back to rapidocr
+  fallback: rapidocr
+  confidence_threshold: 0.60      # Surya page_confidence below this (e.g. handwritten) -> rapidocr fallback
+  # Image-type routing implemented with Stage-B signals (no VLM needed yet):
+  #   source==pdf            -> skip OCR (Path B already has clean pdf_text)        [no rework]
+  #   no meaningful text      -> skip OCR (pure MRI / pure photo / decorative)
+  #   has text                -> Surya (covers dense text / table / algorithm)
+  #   Surya low-conf / error  -> RapidOCR fallback (handwritten etc.)
+  skip_no_text:
+    quick_text_len_max: 12          # below this AND density below -> treat as pure image, skip OCR
+    density_max: 0.03
+
+# ---------------------------------------------------------------------------
+# export_web.py
+# ---------------------------------------------------------------------------
+export:
+  # Name printed in the exported page footer ("<author> 設計 · viewer …").
+  # Blank (the default) omits the footer entirely. Override per run with --author.
+  author: ""

@@ -1,0 +1,7 @@
+# Normalize to LF everywhere. tools/sync_from_skill.py writes LF, so a CRLF
+# checkout would make --check report every synced file as modified.
+* text=auto eol=lf
+
+# Long wordlists: don't try to diff them.
+data/real_words.txt    -diff
+data/real_acronyms.txt -diff

@@ -1,0 +1,37 @@
+# Machine-specific config — copy config.example.yaml to config.yaml and edit.
+config.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Pipeline output. Every stage writes into a per-lecture directory; none of it
+# belongs in the repo.
+_lecture/
+*_lecture/
+slides/
+logs/
+runs.jsonl
+transcript.json
+transcript.txt
+transcript.partial.json
+slides_*.json
+asr_suspects.txt
+alignment.json
+metadata.json
+web_export/
+
+# Benchmark inputs and results are bring-your-own (see ocr_bench/README.md).
+ocr_bench/fixtures/
+ocr_bench/fixtures_manifest.json
+ocr_bench/results/
+ocr_bench/report.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
