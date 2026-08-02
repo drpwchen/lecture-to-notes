@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- CI: gitleaks secret-scan workflow over full history (`.github/workflows/secret-scan.yml`) + README badges.
+- CI：gitleaks 全 history 密鑰掃描 workflow ＋ README 徽章。
+
 ## [0.1.0] — 2026-08-02
 
 Initial public release.
@@ -43,6 +50,13 @@ been exercised. Bug reports from other platforms are the most useful thing you
 can send.
 
 ---
+
+## [Unreleased]
+
+### Added
+
+- CI: gitleaks secret-scan workflow over full history (`.github/workflows/secret-scan.yml`) + README badges.
+- CI：gitleaks 全 history 密鑰掃描 workflow ＋ README 徽章。
 
 ## [0.1.0] — 2026-08-02（繁體中文）
 

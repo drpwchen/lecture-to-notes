@@ -1,5 +1,7 @@
 # lecture-to-notes
 
+[![CI](https://github.com/drpwchen/lecture-to-notes/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/drpwchen/lecture-to-notes/actions/workflows/secret-scan.yml)
+
 [English](README.md) · **繁體中文**
 
 ![lecture-to-notes — 把影片、錄音、投影片、照片變成結構化、可回溯的筆記](docs/assets/hero.png)

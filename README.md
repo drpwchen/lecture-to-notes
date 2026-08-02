@@ -1,5 +1,7 @@
 # lecture-to-notes
 
+[![CI](https://github.com/drpwchen/lecture-to-notes/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/drpwchen/lecture-to-notes/actions/workflows/secret-scan.yml)
+
 **English** · [繁體中文](README.zh-TW.md)
 
 ![lecture-to-notes — turn any mix of video, audio, slides and photos into structured, grounded notes](docs/assets/hero.png)
