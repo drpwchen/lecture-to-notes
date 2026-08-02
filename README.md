@@ -1,5 +1,7 @@
 # lecture-to-notes
 
+![lecture-to-notes — turn any mix of video, audio, slides and photos into structured, grounded notes](docs/assets/hero.png)
+
 Turn a lecture or conference recording into structured, slide-illustrated notes.
 
 Every expensive stage runs **locally**: Whisper ASR on your GPU, frame
