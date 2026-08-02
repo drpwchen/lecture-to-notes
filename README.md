@@ -2,7 +2,10 @@
 
 ![lecture-to-notes — turn any mix of video, audio, slides and photos into structured, grounded notes](docs/assets/hero.png)
 
-Turn a lecture or conference recording into structured, slide-illustrated notes.
+Turn a lecture or conference recording into structured, slide-illustrated notes —
+and into a **synced HTML viewer** where the video, the timestamped transcript,
+and the curated summary sit on one page: the video highlights the matching note
+as it plays, and clicking any note timestamp seeks the video.
 
 Every expensive stage runs **locally**: Whisper ASR on your GPU, frame
 extraction, OCR, and a local vision model for slide semantics. An LLM is used
@@ -38,6 +41,7 @@ flowchart TD
     T --> E
     E --> F["Stage F — synthesis (LLM)<br/>tier pass, then write pass"]
     F --> O["render_embeds.py → finalize_to_vault.py → audit_note.py"]
+    F --> W["export_web.py<br/><b>synced HTML viewer</b> — video + transcript + summary on one page"]
 ```
 
 Stages A–E are plain Python and cost zero LLM tokens. They produce
@@ -46,6 +50,31 @@ signals, and the transcript segments spoken while it was on screen. That file is
 the input to synthesis, and it is also readable on its own — if you never run
 Stage F you still have a transcript, a deduplicated slide set, and the mapping
 between them.
+
+## The HTML viewer: video, transcript and summary on one page
+
+The signature output. `export_web.py` builds a **single self-contained HTML
+page** per course where the video, the timestamped transcript, and the curated
+summary notes are presented **together and kept in sync both ways**:
+
+- **Video → notes**: as the video plays, the matching note bullet
+  auto-highlights and scrolls into view.
+- **Notes → video**: every bullet carries a `(Vn MM:SS)` timestamp — click it
+  and the video seeks to that moment.
+- **Three read modes**: summary only, transcript only, or both side by side —
+  the summary layer (curated, workflow-ordered) and the transcript layer
+  (verbatim, time-ordered) are separate chapters of the same timeline, so you
+  can study top-down and verify bottom-up without leaving the page.
+- **Resizable panes, sidebar segment navigation**, slide images inline where
+  they were shown.
+- **Offline and shareable**: one `.html` plus one support folder (browser-ready
+  clips, friendly-named slides, markdown + PDF copies). No server, no build
+  step for the reader — send the folder, they double-click the page.
+  `--compress` produces a smaller H.264 set for handing around.
+
+The viewer UI lives in `scripts/layout2/` (`viewer.css`, `viewer.js`);
+`export_web.py` only generates the per-course timeline manifest and the synced
+note HTML, so a UI tweak is an asset edit, not a generator change.
 
 ## Alignment: capture time is a hypothesis, cross-correlation is evidence
 
@@ -203,7 +232,11 @@ MIT — see [LICENSE](LICENSE).
 
 # 繁體中文說明
 
-把演講／研討會錄影變成有投影片、可回溯的結構化筆記。
+把演講／研討會錄影變成有投影片、可回溯的結構化筆記，並輸出招牌的
+**同步 HTML 檢視頁**：影片、逐字稿、總整理在同一頁呈現——影片播到哪，
+對應筆記自動高亮捲動；點筆記上的 `(Vn MM:SS)` 時間戳，影片直接跳到那一刻。
+三種閱讀模式（只看總整理／只看逐字稿／並排對照），單一 HTML＋素材資料夾即可
+離線分享，收到的人點兩下就能看。
 
 重的階段全部在本機跑：Whisper 轉錄、抽幀、OCR、本地視覺模型判讀投影片語意。
 LLM 只在最後一步負責寫，而且只能根據前面產生的證據寫。
