@@ -8,7 +8,7 @@ All notable changes to this project are documented here. This project follows
 ### Added
 
 - CI: gitleaks secret-scan workflow over full history (`.github/workflows/secret-scan.yml`) + README badges.
-- CI：gitleaks 全 history 密鑰掃描 workflow ＋ README 徽章。
+- README: real viewer screenshots (synced view / course hub / summary view), a "Bring whatever you captured" section, and an honest no-GPU ladder: built-in CPU fallback → hosted Groq Whisper (`scripts/groq_asr.py`) → untested Apple Silicon.
 
 ## [0.1.0] — 2026-08-02
 
@@ -53,10 +53,10 @@ can send.
 
 ## [Unreleased]
 
-### Added
+### 新增
 
-- CI: gitleaks secret-scan workflow over full history (`.github/workflows/secret-scan.yml`) + README badges.
 - CI：gitleaks 全 history 密鑰掃描 workflow ＋ README 徽章。
+- README：實際檢視頁截圖（同步視圖／課程首頁／總整理頁）、「手上有什麼就帶什麼來」一節、無 GPU 退階說明（內建 CPU fallback → Groq 雲端 Whisper → Apple Silicon 未實測）；中文版換中文 banner。
 
 ## [0.1.0] — 2026-08-02（繁體中文）
 
