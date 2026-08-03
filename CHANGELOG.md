@@ -3,6 +3,32 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-08-03
+
+### Added
+
+- **Whole-talk overview segment (全場總整理)**, auto-appended by
+  `build_single_talk_web.py`: however many segments a talk is split into, the
+  viewer still needs one place listing everything — and the `_HUB` note never
+  renders in the viewer (markdown export only), so the overview is its own
+  **L3-only segment**: `display_order` 0 (sorts first in the drawer), time
+  range = the whole talk, no L2 file (the segment card falls back to the L3
+  section when L2 is absent). `--no-overview` opts out; `--export` counts the
+  overview note as a required L3.
+- **Overview content spec, typed by one question — "is this a single body of
+  knowledge?"** (`reference/pipeline.md#web-export`): single talk → 5–8
+  whole-talk pearls with clickable timecodes + one line per segment;
+  same-lecturer series with a thematic arc → thematic reorganization
+  (assessment→intervention tables, workflows) with per-claim source tags and
+  an "editor's ordering" disclaimer; multi-speaker multi-topic workshop →
+  **catalog only, never forced cross-talk synthesis**.
+
+### Changed
+
+- SKILL.md Step 15: the segment plan is authored by the synthesis stage itself
+  (derived from transcript + slide topics) — single-talk HTML export is fully
+  automatic, no human segmentation step.
+
 ## [0.4.0] — 2026-08-03
 
 ### Added

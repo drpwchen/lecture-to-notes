@@ -235,16 +235,24 @@ python <skill-dir>/scripts/build_single_talk_web.py "$OUT_DIR" --plan seg_plan.j
 # … Stage F writes the L3/ files … then:
 python <skill-dir>/scripts/build_single_talk_web.py "$OUT_DIR" --plan seg_plan.json --export
 ```
-A single talk gets the synced HTML viewer by default, not just workshops. Write
-a segment plan (JSON list: seg/start/end/slug/title_zh) — ==content sections =
-more segments, not more headings==, the viewer builds exactly two chapters per
-segment. The script assembles manifest + `segments.json` + L2 slices + HUB
-skeleton from `transcript.json`; Stage F then writes one `L3_segNN_<slug>.md`
-per segment (==image embeds by basename only, timecodes `` `(V1 MM:SS)` ``==);
-`--export` runs `export_web.py`. Compression default is ==H.265 CRF 24==
-(self-use; `--codec h264` when sharing to machines you can't verify).
-Multi-talk workshops keep their own flow → `reference/segmented-mode.md`.
-→ `reference/pipeline.md#web-export`
+A single talk gets the synced HTML viewer by default, not just workshops.
+==Stage F authors the segment plan itself== (JSON list:
+seg/start/end/slug/title_zh, derived from the transcript + slide topics — no
+human segmentation needed); ==content sections = more segments, not more
+headings==, the viewer builds exactly two chapters per segment. The script assembles manifest + `segments.json` + L2 slices + HUB
+skeleton from `transcript.json`, and ==auto-appends an L3-only 全場總整理
+overview segment== (sorted first — many segments still need one place listing
+everything; the HUB never renders in the viewer). Stage F then writes one
+`L3_segNN_<slug>.md` per segment (==image embeds by basename only, timecodes
+`` `(V1 MM:SS)` ``==) plus the overview note — content shape picked by ==one
+question: is this a single body of knowledge?== (single talk → pearls +
+per-segment one-liners; same-lecturer arc → thematic reorganization with
+sources; multi-speaker workshop → ==catalog only, never forced synthesis== —
+spec in `reference/pipeline.md#web-export`); `--export` refuses while any L3
+is missing.
+Compression default is ==H.265 CRF 24== (self-use; `--codec h264` when sharing
+to machines you can't verify). Multi-talk workshops keep their own flow →
+`reference/segmented-mode.md`. → `reference/pipeline.md#web-export`
 
 ## Edge cases
 

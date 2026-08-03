@@ -27,6 +27,17 @@ never a vault path — resolve_image_src indexes figures/ by basename), and
 "内容分段" means ==more segments in the plan, not more headings== (the viewer
 builds exactly two chapters per segment: L2 + L3).
 
+An ==overview segment (全場總整理) is auto-appended== (user rule 2026-08-03:
+many segments still need one place listing everything): display_order 0 so it
+sorts first in the drawer, time range = the whole talk, ==L3 only — no L2 is
+written for it== (the viewer's segment card falls back to the L3 section when
+L2 is absent; the whole-talk transcript would only duplicate every other L2).
+The _HUB is markdown-export-only — it never appears as a viewer panel, which is
+why the overview must be a segment. Stage F writes its
+L3/L3_segNN_overview.md: 5–8 whole-talk clinical pearls each carrying a
+`(V1 MM:SS)` timecode, then a one-line takeaway per content segment.
+--no-overview opts out.
+
 The plan file is a JSON list, one row per segment:
   [{"seg": 1, "start": "00:00", "end": "01:00", "slug": "opening-problem",
     "title_zh": "開場：三個問題", "region": "命題", "type": "discussion"}, ...]
@@ -146,6 +157,8 @@ def main():
                     help="manifest course_type (default: most common plan row type)")
     ap.add_argument("--hub-slug", default="index",
                     help="ASCII slug for the _HUB_<slug>.md filename (default: index)")
+    ap.add_argument("--no-overview", action="store_true",
+                    help="skip the auto-appended 全場總整理 overview segment")
     ap.add_argument("--force", action="store_true", help="overwrite existing outputs")
     ap.add_argument("--export", action="store_true",
                     help="run export_web.py afterwards (needs the L3 files written first)")
@@ -187,6 +200,18 @@ def main():
         "display_order": i, "topic": r["title_zh"], "type": r["type"],
         "time": f"{fmt_mmss(r['start'])}–{fmt_mmss(r['end'])}",
     } for i, r in enumerate(rows, 1)]
+    overview = None
+    if not A.no_overview:
+        # Whole-talk 總整理 as its own L3-only segment, sorted first in the
+        # drawer. It must be a segment: the _HUB never renders in the viewer.
+        overview = {
+            "seg": max(r["seg"] for r in rows) + 1, "files": [vbase],
+            "clips": [1], "slug": "overview", "make_l3": True,
+            "title_zh": "全場總整理", "region": "總覽", "display_order": 0,
+            "topic": "全場總整理", "type": rows[0]["type"],
+            "time": f"00:00–{fmt_mmss(t_end)}",
+        }
+        segments.append(overview)
     write_once(os.path.join(course, "_intermediate", "seg", "segments.json"),
                json.dumps(segments, ensure_ascii=False, indent=2), A.force)
 
@@ -214,15 +239,22 @@ def main():
            f"| 段 | 時間 | 主題 | 分類 |\n|---|---|---|---|\n{table}\n")
     write_once(os.path.join(course, f"_HUB_{A.hub_slug}.md"), hub, A.force)
 
-    missing_l3 = [f"L3_seg{r['seg']:02d}_{r['slug']}.md" for r in rows
+    want_l3 = rows + ([overview] if overview else [])
+    missing_l3 = [f"L3_seg{r['seg']:02d}_{r['slug']}.md" for r in want_l3
                   if not os.path.exists(os.path.join(course, "L3",
                                         f"L3_seg{r['seg']:02d}_{r['slug']}.md"))]
-    print(f"\nassembled: {len(rows)} segments, {n_bullets} L2 bullets, video={vbase}")
+    print(f"\nassembled: {len(segments)} segments "
+          f"({len(rows)} content{' + 1 overview' if overview else ''}), "
+          f"{n_bullets} L2 bullets, video={vbase}")
     if missing_l3:
         print(f"next: Stage F writes {len(missing_l3)} L3 note(s) into L3/ "
               f"(==image embeds by basename only, timecodes `(V1 MM:SS)`==):")
         for m in missing_l3:
             print(f"  L3/{m}")
+        if overview and any("overview" in m for m in missing_l3):
+            print("  overview content by course shape (single talk: 5-8 pearls "
+                  "with timecodes + one line per segment; series/workshop "
+                  "variants -> reference/pipeline.md#web-export)")
     export_cmd = [sys.executable, os.path.join(HERE, "export_web.py"), course]
     if A.export:
         if missing_l3 and not A.force:

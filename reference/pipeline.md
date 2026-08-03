@@ -580,11 +580,41 @@ fix is safe. Guards: overlapping segments and duplicate slugs are refused;
 a plan that ends >60 s before the transcript does warns about the dropped tail;
 a segment with no transcript text warns.
 
+**Overview segment (全場總整理).** Auto-appended after the plan rows (user rule
+2026-08-03: however many segments there are, the viewer still needs one place
+listing everything). It is ==a segment because the `_HUB` never renders in the
+viewer== (markdown export only — `resolve_link` returns None for `_HUB`):
+`display_order` 0 so it sorts first in the drawer, `region` 總覽, time range =
+the whole talk, and ==L3 only — no L2 is written for it== (the segment card
+falls back to its L3 section when L2 is absent, verified; a whole-talk L2 would
+only duplicate every other transcript slice). `--no-overview` opts out.
+
 ==L3 content is NOT generated here== — Stage F writes `L3_segNN_<slug>.md` per
-segment. Two format traps for that writer: image embeds ==basename only==
-(`![[fig.jpg]]`, never a vault path — `resolve_image_src` indexes `figures/` by
-basename), and ==content sections = more segments in the plan, not more
-headings== (the viewer builds exactly two chapters per segment: L2 + L3).
+segment, plus the overview's `L3_segNN_overview.md`.
+
+**Overview content spec — pick by ONE question** (user rule 2026-08-03): ==are
+these segments parts of a single body of knowledge?== The catalog layer is
+universal; the synthesis layer is conditional — ==never force synthesis across
+unrelated talks==.
+
+- **A · single talk** (one topic, however many speakers discuss it): 5–8
+  whole-talk clinical pearls, ==each carrying a `(V1 MM:SS)` timecode==
+  (segment-start precision is fine), then ==one line per content segment==
+  (what it covered + the takeaway).
+- **B · same-lecturer series with a thematic arc** (multi-day, one framework —
+  e.g. a 2-day course teaching one system): thematic ==reorganization== —
+  actionable tables (assessment → intervention → retest), workflows, the
+  system's logic — ==every claim tagged with its source segment/timecode==, and
+  a disclaimer that ==the ordering is the editor's, not the lecture order==.
+- **C · multi-speaker, multi-topic workshop**: ==catalog only== — one line per
+  talk (speaker + timecode + takeaway + who should watch it). No forced
+  cross-talk narrative; only if ≥2 speakers genuinely echo the same point may
+  an optional 跨場呼應 section list it, each entry with both sources.
+
+Two format traps for the writer: image embeds ==basename only== (`![[fig.jpg]]`,
+never a vault path — `resolve_image_src` indexes `figures/` by basename), and
+==content sections = more segments in the plan, not more headings== (the viewer
+builds exactly two chapters per segment: L2 + L3).
 
 `--export` runs `export_web.py` afterwards; it refuses while L3 files are
 missing (the viewer would ship without the 整理稿 layer). Compression defaults

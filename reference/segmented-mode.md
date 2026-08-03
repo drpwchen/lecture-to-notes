@@ -342,6 +342,13 @@ python <skill-dir>/scripts/export_web.py "<course dir>" [--name "課程全名"] 
 | `--codec` | `hevc` (x265, default — smallest) or `h264` (x264 — universal playback, for sharing to machines you can't verify) |
 | `--crf` | quality for compression. Default 24 for hevc, 18 for h264 (≈ visually lossless each; measured equivalents 2026-08-03) |
 
+**Overview segment.** Workshops can (and should) carry the same ==L3-only
+全場總整理 segment== single-talk mode auto-appends: `display_order` 0, region
+總覽, whole-course time range, no L2 file — the segment card falls back to the
+L3 section. Content shape depends on whether the course is one body of
+knowledge: ==multi-speaker multi-topic → catalog only, never forced
+synthesis== — full spec in `pipeline.md#web-export`.
+
 **Output**: ==ONE webpage at the course root plus a same-named support folder==
 beside it. No wrapper folder, no portable package.
 
