@@ -3,10 +3,30 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] — 2026-08-03
 
 ### Added
 
+- **Slide-layer search in the web viewer** (TIMELINE schema v3, additive). The
+  search box now indexes `slide_blocks` — per-canonical-slide OCR text and VLM
+  summaries pulled from `clips/*/slides_grounded.json` at export time — so a term
+  that appears only ON a slide and was never spoken is still findable. A slide
+  hit jumps the player to that slide's own display window; no image is copied.
+  Calibrated filters keep hands-on-demo noise out (OCR must read like language,
+  not a device-UI overlay; VLM summaries only for information graphics). Courses
+  without grounding files export exactly as before. *Idea borrowed from
+  [jieyu166/rad-workflow](https://github.com/jieyu166/rad-workflow)'s course-hub
+  cross-lecture search — thanks!*
+- **Deep links + copy-link button in the viewer**: `<course>.html?f=<media>&t=<sec>`
+  opens straight at that spot (works from `file://` too), and a 🔗 header button
+  copies the current playing position as such a link.
+- **Transcript-coverage gate in `audit_note.py`** (`--min-coverage`, default
+  0.10): note payload chars ÷ transcript chars below the floor → WARN, catching
+  the "90-min transcript, one-screen note" over-compression collapse. Calibrated
+  on 410 real segments (median 0.36, p10 0.17 — the default floor trips only the
+  bottom ~2%). Runs in `--mode lecture` (via `--grounding`) and per-segment on
+  `--mode lecture-seg` L3 notes. *Adapted from rad-workflow's Stage-1 coverage
+  ratio, recalibrated for synthesis notes.*
 - CI: gitleaks secret-scan workflow over full history (`.github/workflows/secret-scan.yml`) + README badges.
 - README: real viewer screenshots (synced view / course hub / summary view), a "Bring whatever you captured" section, and an honest no-GPU ladder: built-in CPU fallback → hosted Groq Whisper (`scripts/groq_asr.py`) → untested Apple Silicon.
 

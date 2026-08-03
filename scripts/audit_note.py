@@ -190,6 +190,69 @@ def load_grounding(gdir):
     return out
 
 
+# ---- transcript-coverage gate (anti-over-compression; borrowed from jieyu166's
+# rad-workflow "Stage 1 coverage ratio", recalibrated for synthesis notes) ----
+# ratio = non-ws chars of the note payload ÷ non-ws chars of the transcript.
+# Synthesis legitimately compresses (corpus n=410 segments: median 0.36, p10 0.17,
+# min 0.056), so the default floor 0.10 only trips the bottom ~2% — the
+# "90-min transcript, one-screen note" collapse shape. WARN, never FAIL: a
+# hands-on demo segment can be legitimately thin; the reviewer decides.
+COVERAGE_FLOOR = 0.10
+
+
+def _note_payload_chars(text):
+    """Note chars that count toward coverage: strip frontmatter, image embeds,
+    wikilink brackets, `(src MM:SS)` timestamps, URLs, then all whitespace."""
+    text = re.sub(r"^---\n.*?\n---\n", "", text, count=1, flags=re.S)
+    text = re.sub(r"!\[\[[^\]]+\]\]", "", text)
+    text = re.sub(r"\[\[([^\]|]+)(\|[^\]]+)?\]\]", r"\1", text)
+    text = re.sub(r"`?\([^()]{0,30}\d{1,2}:\d{2}\)`?", "", text)
+    text = re.sub(r"https?://\S+", "", text)
+    return len(re.sub(r"\s+", "", text))
+
+
+def _transcript_chars(path):
+    try:
+        t = open(path, encoding="utf-8").read()
+    except OSError:
+        return 0
+    t = re.sub(r"\[?\d{1,2}:\d{2}(:\d{2})?\]?", "", t)
+    return len(re.sub(r"\s+", "", t))
+
+
+def transcript_chars_for(mode, seg_kind, seg_root, grounding_dir, note_path):
+    """Locate the transcript(s) this note synthesizes and return their char count.
+    lecture mode: <grounding_dir>/transcript.txt (single-lecture pipeline layout).
+    lecture-seg L3: the segment's clips' transcript.txt via segments.json+manifest.
+    Returns 0 when nothing is found (check is skipped, never guessed)."""
+    if mode == "lecture" and grounding_dir:
+        return _transcript_chars(os.path.join(grounding_dir, "transcript.txt"))
+    if mode == "lecture-seg" and seg_kind == "l3" and seg_root:
+        m = re.search(r"L3_seg(\d+)_", os.path.basename(note_path))
+        if not m:
+            return 0
+        segno = int(m.group(1))
+        try:
+            segs = json.load(open(os.path.join(seg_root, "_intermediate", "seg",
+                                               "segments.json"), encoding="utf-8"))
+            man = json.load(open(os.path.join(seg_root, "_raw", "manifest.json"),
+                                 encoding="utf-8"))
+        except (OSError, ValueError):
+            return 0
+        clips = {c.get("idx"): c for c in man.get("clips", [])}
+        src2clip = {os.path.basename(c["src"]): c
+                    for c in man.get("clips", []) if c.get("src")}
+        s = next((x for x in segs if x.get("seg") == segno), None)
+        if not s:
+            return 0
+        cs = ([clips[i] for i in s.get("clips") or [] if i in clips]
+              or [src2clip[f] for f in s.get("files") or [] if f in src2clip])
+        return sum(_transcript_chars(os.path.join(seg_root, "clips", c["name"],
+                                                  "transcript.txt"))
+                   for c in cs if c.get("name"))
+    return 0
+
+
 def caption_neighborhood(lines, idx):
     """Caption text near an embed: adjacent italic line, callout block, or heading."""
     picked = []
@@ -259,7 +322,7 @@ def top_section_body(lines, title):
     return body
 
 
-def audit(path, vault, mode, template, grounding_dir=None):
+def audit(path, vault, mode, template, grounding_dir=None, min_coverage=COVERAGE_FLOOR):
     t = load(path)
     fm, body = split_frontmatter(t)
     lines = t.split("\n")
@@ -549,6 +612,23 @@ def audit(path, vault, mode, template, grounding_dir=None):
             add("WARN", "LEC C3 caption↔frame match",
                 "pass --grounding <project_dir> to auto-verify captions against frame OCR (C3)")
 
+    # ---------- transcript coverage (lecture + lecture-seg L3) ----------
+    if mode in ("lecture", "lecture-seg") and (mode == "lecture" or seg_kind == "l3"):
+        tch = transcript_chars_for(mode, seg_kind, seg_root, grounding_dir, path)
+        if tch > 0:
+            nch = _note_payload_chars(t)
+            ratio = nch / tch
+            det = f"note {nch:,} / transcript {tch:,} chars = {ratio:.3f} (floor {min_coverage})"
+            if ratio < min_coverage:
+                add("WARN", "LEC transcript coverage",
+                    f"{det} — note may be over-compressed for its transcript; "
+                    "review, or accept for demo/hands-on segments")
+            else:
+                add("PASS", "LEC transcript coverage", det)
+        elif mode == "lecture" and grounding_dir:
+            add("WARN", "LEC transcript coverage",
+                f"no transcript.txt in {grounding_dir} — coverage not verified")
+
     # ---------- textbook-specific ----------
     if mode == "textbook":
         cit = re.findall(r"\(citation\b", t)
@@ -615,9 +695,13 @@ def main():
                     or os.path.expanduser("~/Documents/Obsidian/Obsidian"))
     ap.add_argument("--grounding", default=None,
                     help="lecture project dir holding slides_grounded.json/slides_final.json; "
-                         "enables C3 caption↔frame auto-verification")
+                         "enables C3 caption↔frame auto-verification + transcript coverage")
+    ap.add_argument("--min-coverage", type=float, default=COVERAGE_FLOOR,
+                    help="transcript-coverage WARN floor (note chars ÷ transcript chars); "
+                         f"default {COVERAGE_FLOOR}, calibrated on 410 real segments "
+                         "(median 0.36, p10 0.17) — trips only the bottom ~2%%")
     a = ap.parse_args()
-    res = audit(a.note, a.vault, a.mode, a.template, a.grounding)
+    res = audit(a.note, a.vault, a.mode, a.template, a.grounding, a.min_coverage)
     print(f"\n=== AUDIT [{a.mode}{'/' + a.template if a.template else ''}]: {os.path.basename(a.note)} ===")
     fails = warns = 0
     for level, check, detail in res:

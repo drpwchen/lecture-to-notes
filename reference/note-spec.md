@@ -497,7 +497,13 @@ vocabulary with its frame's OCR or labels — a wrong or swapped figure).
 
 **WARN, review each** — gallery dump, zero-figure 總整理, no 🗣️ marker, empty
 headings, unexpanded rare acronyms, an over-long fig-callout first line, CJK
-adjacent to `==`, weak one-token C3 overlap.
+adjacent to `==`, weak one-token C3 overlap, ==transcript coverage below the
+floor== (note payload chars ÷ transcript chars < `--min-coverage`, default 0.10 —
+an anti-over-compression tripwire calibrated on 410 real segments where the
+median ratio is 0.36 and only the bottom ~2% fall under 0.10; a legitimately
+thin hands-on-demo segment is accepted consciously, a "90-min transcript,
+one-screen note" collapse is rewritten. Idea borrowed from jieyu166's
+rad-workflow Stage-1 coverage gate, recalibrated for synthesis).
 
 `[review]`-only items (B3/B4 self-containment, C1/C3/C4 figure placement, D1–D3
 reference handling, E1 callout indentation) are never machine-checkable — they

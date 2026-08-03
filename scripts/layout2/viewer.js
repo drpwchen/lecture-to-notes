@@ -313,10 +313,15 @@ function applyFontScale(s){
 }
 
 /* ---- 9c. in-viewer full-text search (dependency-free) ----
-   Filters ALL note_blocks (summary + transcript, every segment) by AND-of-terms,
-   renders a results dropdown, and jumps to the block on click (switch segment,
-   cue video to the block's timestamp, scroll the bullet into view). */
-const searchIndex = blocks.map(b => ({b, hay: (b.text || '').toLowerCase()}));
+   Filters ALL note_blocks (summary + transcript, every segment) PLUS the slide
+   layer (slide_blocks: OCR text + VLM summary per canonical slide — terms that
+   appear only ON a slide, never spoken) by AND-of-terms, renders a results
+   dropdown, and jumps on click. Note hits jump to the bullet; slide hits jump
+   the player to the slide's display window (the slide is on screen in the video
+   itself — no copied image needed). */
+const slideBlocks = TIMELINE.slide_blocks || [];
+const searchIndex = blocks.map(b => ({b, hay: (b.text || '').toLowerCase()}))
+  .concat(slideBlocks.map((s, i) => ({slide: s, slideIdx: i, hay: (s.text || '').toLowerCase()})));
 function escHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function snippet(text, terms){
   const t = text || '';
@@ -338,10 +343,18 @@ function runSearch(qstr){
   if(!terms.length){ panel.innerHTML=''; panel.classList.remove('open'); return; }
   const hits = [];
   for(const item of searchIndex){
-    if(terms.every(t=>item.hay.includes(t))){ hits.push(item.b); if(hits.length>=80) break; }
+    if(terms.every(t=>item.hay.includes(t))){ hits.push(item); if(hits.length>=80) break; }
   }
   if(!hits.length){ panel.innerHTML='<div class="sr-empty">無符合結果</div>'; panel.classList.add('open'); return; }
-  const rows = hits.map(b=>{
+  const rows = hits.map(item=>{
+    if(item.slide){
+      const s = item.slide;
+      return '<button class="sr-item" type="button" data-slide="'+item.slideIdx+'">'
+        + '<span class="sr-seg">投影片</span>'
+        + '<span class="sr-text">'+snippet(s.text, terms)+'</span>'
+        + '<span class="sr-ts">'+fmt(s.start_sec)+'</span></button>';
+    }
+    const b = item.b;
     const seg = segmentById(b.segment_id);
     const segNo = seg ? seg.segment_number : '';
     const kind = b.section_kind==='summary_note' ? '總' : '逐';
@@ -370,6 +383,60 @@ function jumpToBlock(blockId){
     }
   }, 60);
 }
+/* Cue player to (file, t) and land on the owning segment's notes. Shared by slide
+   search hits and ?f=&t= deep links. When no note block covers that instant
+   (slide shown during an untimestamped stretch), just cue the video. */
+function seekTo(file, t, autoplay){
+  const cands = matchingBlocks(file, t);
+  if(cands.length){
+    const b = cands.find(x=>x.section_kind==='summary_note') || cands[0];
+    showSegment(b.segment_id, false);
+  }else{
+    const seg = segments.find(s=>segFiles(s).includes(file));
+    if(seg) showSegment(seg.segment_id, false);
+  }
+  setVideo(file, t, autoplay);
+  activateForTime(file, t, true, true);
+}
+function jumpToSlide(i){
+  const s = slideBlocks[i]; if(!s) return;
+  closeSearch();
+  seekTo(s.media_file, Number(s.start_sec)||0, false);
+}
+/* ---- 9d. deep links (?f=<media file>&t=<sec>) + copy-link button ----
+   Works on file:// too (query survives). No autoplay: browsers block
+   sound-on autoplay, and a shared link should land quietly on the spot. */
+function applyDeepLink(){
+  let params;
+  try{ params = new URLSearchParams(location.search); }catch(e){ return false; }
+  const t = parseFloat(params.get('t'));
+  if(isNaN(t) || t < 0) return false;
+  let file = params.get('f') || '';
+  const known = new Set((TIMELINE.media_parts||[]).map(p=>p.file));
+  if(file && !known.has(file)){
+    // tolerate an encoded/renamed link: match by basename before giving up
+    const hit = [...known].find(k=>k.toLowerCase()===file.toLowerCase());
+    if(hit) file = hit; else file = '';
+  }
+  if(!file) file = segments[0] ? segments[0].media_file : '';
+  if(!file) return false;
+  seekTo(file, t, false);
+  return true;
+}
+function copyCurrentLink(btn){
+  const v = q('#player');
+  const file = v.dataset.file || (segments[0] && segments[0].media_file) || '';
+  if(!file) return;
+  const t = Math.floor(v.currentTime || 0);
+  const base = location.href.split('#')[0].split('?')[0];
+  const url = base + '?f=' + encodeURIComponent(file) + '&t=' + t;
+  const done = ()=>{ if(btn){ const old=btn.textContent; btn.textContent='✓'; window.setTimeout(()=>{btn.textContent=old;}, 1200); } };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(done, ()=>window.prompt('複製這個連結：', url));
+  }else{
+    window.prompt('複製這個連結：', url);
+  }
+}
 
 /* ---- 10. event bindings + init ---- */
 document.addEventListener('click', e=>{
@@ -390,7 +457,12 @@ document.addEventListener('click', e=>{
   const toggle=e.target.closest('[data-toggle-drawer]');
   if(toggle){e.preventDefault(); setDrawer(document.body.classList.contains('drawer-closed')); return;}
   const sr=e.target.closest('.sr-item');
-  if(sr){e.preventDefault(); jumpToBlock(sr.dataset.block); return;}
+  if(sr){e.preventDefault();
+    if(sr.dataset.slide!==undefined){ jumpToSlide(Number(sr.dataset.slide)); }
+    else jumpToBlock(sr.dataset.block);
+    return;}
+  const cl=e.target.closest('#copy-link');
+  if(cl){e.preventDefault(); copyCurrentLink(cl); return;}
   // click outside the search box closes the results dropdown
   if(!e.target.closest('.ph-search')) closeSearch();
 });
@@ -426,4 +498,5 @@ applyTier(lastTier);
 const singleSeg = segments.length <= 1;
 if(singleSeg){ document.body.classList.add('no-home'); if(segments[0]) showSegment(segments[0].segment_id, true); }
 else showHome();
-if(segments[0]){ const s0=segments[0]; setVideo(s0.media_file, Number(s0.start_sec||0), false); }
+// a ?f=&t= deep link wins over the default first-segment cue
+if(!applyDeepLink() && segments[0]){ const s0=segments[0]; setVideo(s0.media_file, Number(s0.start_sec||0), false); }

@@ -67,8 +67,8 @@ from _common import atomic_write_json, load_config, require_binaries
 # Versioning — manifest schema is ADDITIVE ONLY (never remove/rename a field) so any
 # future viewer reads any past manifest, and any deployed HTML keeps working forever.
 # Upgrade path = regenerate from the (standardized) COURSE dir, NOT in-place migration.
-SCHEMA_VERSION = 2          # 2: added media_src (per-file URL, selective remux) + version stamps
-VIEWER_VERSION = "layout2/2026.06.28"
+SCHEMA_VERSION = 3          # 2: media_src + version stamps · 3: slide_blocks (slide-layer search)
+VIEWER_VERSION = "layout2/2026.08.03"
 
 # Video compatibility — only formats the browser can't play get -c copy remuxed.
 WEB_PLAYABLE_EXT = {".mp4", ".m4v", ".mov", ".webm", ".ogv", ".ogg"}
@@ -557,6 +557,96 @@ def render_sections():
             present.add(sid)
 
 
+# Slide-search filters (calibrated 2026-08-03 on 3 real courses: a hands-on
+# workshop must yield ~nothing — its VLM summaries are per-scene "Instructor
+# palpating…" noise and its OCR is ultrasound-machine UI overlay — while a
+# didactic course must keep nearly every text slide):
+#   OCR path    — needs ≥14 "wordy" chars (letter-words/CJK runs, so device
+#                 overlays like "ML6-15 FR 9.0" don't qualify) AND a frame not
+#                 typed as a live scene. Workshop 2598→82, didactic 241/328 kept.
+#   VLM path    — one_line_summary only for deliberate information graphics
+#                 (table/flowchart/diagram/…), never for scene descriptions.
+_SLIDE_INFO_GFX = {"table", "flowchart", "diagram", "algorithm", "chart"}
+_SLIDE_SCENE = {"ultrasound", "decorative"}
+
+
+def _wordy_chars(t):
+    """Chars in letter-words (≥3) and CJK runs (≥2) — the 'reads like language'
+    signal that machine-UI OCR fragments lack."""
+    n = sum(len(w) for w in re.findall(r"[A-Za-z]{3,}", t))
+    n += sum(len(r) for r in re.findall(r"[㐀-鿿]{2,}", t))
+    return n
+
+
+def _slide_text(g):
+    """Search corpus for one grounded slide, or '' when the frame is a live scene /
+    carries no language: real OCR text (Stage B2 clean_text over Stage B
+    quick_text) for text-bearing slides, VLM one-line summary for labeled
+    information graphics."""
+    ocr = g.get("ocr") or {}
+    vlm = g.get("vlm_signals") or {}
+    cts = set(vlm.get("content_type") or [])
+    text = str(ocr.get("clean_text") or "").strip() or str(ocr.get("quick_text") or "").strip()
+    if text and _wordy_chars(text) >= 14 and not (cts & _SLIDE_SCENE):
+        pass
+    elif cts & _SLIDE_INFO_GFX:
+        text = str(vlm.get("one_line_summary") or "").strip()
+    else:
+        return ""
+    return re.sub(r"\s+", " ", text).strip()[:240]
+
+
+def build_slide_blocks():
+    """Slide-layer search entries from clips/*/slides_grounded.json (Stage E output).
+
+    The transcript layer only knows what was SAID; terms that appear solely ON a
+    slide (a table header, a classification name) are invisible to note-block
+    search. This walks every manifest clip's grounding file and emits one entry
+    per canonical slide with any text signal. No image is copied: a search hit
+    jumps the player to the slide's own display window, so the slide is on screen
+    in the video itself. Courses without grounding files (pre-pipeline imports)
+    yield [] and nothing changes.
+    """
+    out = []
+    for c in (MANIFEST.get("clips") or []):
+        src, name = c.get("src"), c.get("name")
+        if not src or not name:
+            continue
+        gpath = os.path.join(COURSE, "clips", name, "slides_grounded.json")
+        if not os.path.isfile(gpath):
+            continue
+        try:
+            with open(gpath, encoding="utf-8") as fh:
+                grounded = json.load(fh)
+        except (OSError, ValueError) as e:
+            print(f"WARNING: unreadable {gpath}: {e} — slide search skips this clip",
+                  file=sys.stderr)
+            continue
+        if isinstance(grounded, dict):
+            grounded = next((v for v in grounded.values() if isinstance(v, list)), [])
+        media_file = os.path.basename(src)
+        idx = c.get("idx", 0)
+        prev_text = None
+        for g in grounded:
+            if not isinstance(g, dict):
+                continue
+            if not (g.get("dedup") or {}).get("is_canonical", True):
+                continue
+            text = _slide_text(g)
+            if not text or text == prev_text:   # scene-dedup survivors can still repeat text
+                continue
+            prev_text = text
+            out.append({
+                "media_file": media_file,
+                "start_sec": float(g.get("timestamp_start") or 0),
+                "end_sec": float(g.get("timestamp_end") or 0) or None,
+                "frame": f"c{idx:02d}_{g.get('filename', '')}",
+                "text": text,
+            })
+    out.sort(key=lambda s: (s["media_file"], s["start_sec"]))
+    return out
+
+
 def build_timeline(src_resolver):
     """Return (sections_wrapped: {sid:html}, timeline_dict).
     src_resolver(filename) -> relative URL for that source video, or None to fall back to
@@ -638,7 +728,8 @@ def build_timeline(src_resolver):
         "course": COURSE_NAME, "date": COURSE_DATE,
         "media_root": ".", "media_root_relative_to_html": ".", "media_src": media_src,
         "media_parts": media_parts, "chapters": chapters, "segments": segments,
-        "note_blocks": all_blocks, "jump_links": [], "package_profile": "interactive_html",
+        "note_blocks": all_blocks, "slide_blocks": build_slide_blocks(),
+        "jump_links": [], "package_profile": "interactive_html",
     }
     return sections_wrapped, timeline
 
@@ -751,10 +842,11 @@ def make_page(sections_wrapped, timeline, media_root):
 <header class="page-head">
   <div class="ph-meta"><span class="ph-title">{esc(COURSE_NAME)}</span><span class="ph-date">{head_date}</span>{type_badge_html()}</div>
   <div class="ph-search">
-    <input class="ph-search-input" id="search-input" type="search" placeholder="🔍 搜尋全部筆記（按 / 快速聚焦）" autocomplete="off" spellcheck="false" />
+    <input class="ph-search-input" id="search-input" type="search" placeholder="🔍 搜尋筆記＋投影片（按 / 快速聚焦）" autocomplete="off" spellcheck="false" />
     <div class="search-results" id="search-results"></div>
   </div>
   <div class="ph-tools">
+    <button class="ph-btn" id="copy-link" type="button" title="複製目前播放位置的連結（?f=影片&t=秒）">🔗</button>
     <button class="ph-btn" id="font-dec" type="button" title="縮小字體（老花友善）">A−</button>
     <button class="ph-btn" id="font-inc" type="button" title="放大字體">A＋</button>
     <button class="ph-btn" id="home-btn" data-go-home type="button" title="回首頁">🏠</button>
@@ -1245,7 +1337,8 @@ def main(argv=None):
     print(f"OK 影片筆記整合 ({VIEWER_VERSION}, schema v{SCHEMA_VERSION}) -> {HTML_OUT}")
     print(f"  support={SUPPORT}")
     print(f"  sections={len(present)} segments={len(tl['segments'])} note_blocks={nblk} "
-          f"images={len(IMG_MAP)} video={len(remuxed)}/{len(refs)} clips [{vmode}]")
+          f"slide_blocks={len(tl['slide_blocks'])} images={len(IMG_MAP)} "
+          f"video={len(remuxed)}/{len(refs)} clips [{vmode}]")
 
     if PROBE_PROBLEMS:
         print(f"  ⚠️ ffprobe could not read {len(PROBE_PROBLEMS)} file(s) — their "

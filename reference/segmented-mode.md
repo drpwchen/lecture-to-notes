@@ -364,6 +364,22 @@ segment card jumps both. Three read modes (both / summary only / index only) and
 smart auto-scroll that suspends for 5 s after a manual wheel or touch. It is
 self-contained: the per-course `TIMELINE` is embedded inline, no external fetch.
 
+**Search covers the slide layer too** (schema v3, 2026-08-03; idea borrowed from
+jieyu166's rad-workflow course hub). Besides every note bullet, the search box
+indexes `slide_blocks` — per-canonical-slide OCR text + VLM summaries pulled from
+`clips/*/slides_grounded.json` at export time — so ==a term that appears only ON
+a slide and was never spoken is still findable==. A slide hit jumps the player to
+that slide's own display window (the slide is on screen in the video; no image is
+copied). Filters keep hands-on-demo noise out: OCR text must read like language
+(≥14 wordy chars, not a machine-UI overlay, frame not typed `ultrasound`/
+`decorative`); VLM summaries only for information graphics (table/flowchart/
+diagram). Courses without grounding files export exactly as before.
+
+**Deep links + copy-link.** `影片筆記整合.html?f=<原始影片檔名>&t=<秒>` opens
+straight at that spot (works from `file://` too); the 🔗 header button copies the
+current playing position as such a link. No autoplay — a shared link lands
+quietly on the right segment with the video cued.
+
 **TIMELINE build.** Each L2/L3 bullet becomes one `note_block` carrying
 `media_file`, `start_sec`/`end_sec`, `section_kind` (`transcript_index` = L2,
 `summary_note` = L3) and `segment_id`. `start_sec` is parsed from the bullet's
