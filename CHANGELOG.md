@@ -3,6 +3,37 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-08-03
+
+### Added
+
+- **`build_single_talk_web.py` — the synced web viewer for a single talk**
+  (`export_web.py` was written for multi-talk workshops, but a single talk
+  exports fine: every segment's `files[]` points at the same video with
+  absolute timestamps, and `media_parts` dedups by filename — the video is
+  processed once, never split). Feed it the lecture dir plus a segment plan
+  (JSON list: seg/start/end/slug/title_zh) and it assembles the manifest,
+  `segments.json`, per-segment L2 transcript slices (30-second bullet buckets,
+  `` `(V1 MM:SS)` `` timecodes) and a HUB skeleton; synthesis writes the L3
+  notes; `--export` then runs `export_web.py` (and refuses while L3 files are
+  missing). Guards: overlapping segments / duplicate slugs are refused, and a
+  plan that stops >60 s before the transcript ends warns about the dropped
+  tail. SKILL.md gains Step 15 — with a video present, the web viewer is now a
+  default pipeline output, and `route_inputs.py` prints the step.
+
+### Changed
+
+- **`export_web.py` compresses by default, and the codec is now H.265** (x265
+  CRF 24 `-preset medium -tag:v hvc1`). On 2170×1220 screen-recording samples
+  H.265 CRF 24 matched x264 CRF 20 on static segments and came out 43–51%
+  smaller on motion segments (measured 2026-08-03). Note HEVC playback needs
+  decode support on the viewing machine (Windows: HEVC Video Extensions +
+  hardware decode) — the right default for keeping your own archives small;
+  when sharing to machines you can't verify, `--codec h264` keeps the old
+  universal x264 CRF 18 output, and `--no-compress` restores the pre-0.4
+  copy-stream behavior. The `--compress` flag is accepted as a no-op for
+  backward compatibility.
+
 ## [0.3.0] — 2026-08-03
 
 ### Added

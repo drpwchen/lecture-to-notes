@@ -327,8 +327,8 @@ or notes here== — the rename map lives in the export, not the work dir.
 
 ```bash
 python <skill-dir>/scripts/export_web.py "<course dir>" [--name "課程全名"] \
-    [--out PATH] [--date DATE] [--author NAME] [--compress] [--crf 18] \
-    [--remux | --no-remux]
+    [--out PATH] [--date DATE] [--author NAME] [--no-compress] \
+    [--codec hevc|h264] [--crf N] [--remux | --no-remux]
 ```
 
 | Flag | Effect |
@@ -338,8 +338,9 @@ python <skill-dir>/scripts/export_web.py "<course dir>" [--name "課程全名"] 
 | `--author` | name in the page footer; ==blank by default, which omits the footer entirely== |
 | `--remux` | force-process ALL clips to mp4 (default is auto — only non-web-playable formats) |
 | `--no-remux` | never process, even `.MTS`; deploy original filenames as-is |
-| `--compress` | re-encode video to H.264 for a small shareable set; default just copies the video stream (fast, full size) |
-| `--crf` | x264 CRF for `--compress`; 18 = visually lossless, 20 ≈ transparent and smaller. Default 18 |
+| `--no-compress` | ship video streams as-is (copy, fast, full size) — compression is ==ON by default== since 2026-08-03 |
+| `--codec` | `hevc` (x265, default — smallest) or `h264` (x264 — universal playback, for sharing to machines you can't verify) |
+| `--crf` | quality for compression. Default 24 for hevc, 18 for h264 (≈ visually lossless each; measured equivalents 2026-08-03) |
 
 **Output**: ==ONE webpage at the course root plus a same-named support folder==
 beside it. No wrapper folder, no portable package.
@@ -399,19 +400,25 @@ sync key. The result opens cleanly as a vault with no dead links.
 `` `(00004.MTS 03:12)` `` (raw filename, legacy). Both work.
 
 **Auto-selective conversion.** A clip gets an ffmpeg pass when its container is
-not web-playable, OR ==its audio is not browser-decodable==, OR `--compress` /
-`--remux` is set. ==AVCHD `.MTS` carry AC-3 audio, which no browser decodes —
-Chrome plays the video silently== (verified via ffprobe). Web-native `.mp4`+AAC
-clips are used as-is and ==are not copied or renamed== (avoids duplicating
-gigabytes); only transcoded clips land in `媒體/影片`.
+not web-playable, OR ==its audio is not browser-decodable==, OR compression is
+on (the default) / `--remux` is set. ==AVCHD `.MTS` carry AC-3 audio, which no
+browser decodes — Chrome plays the video silently== (verified via ffprobe).
+Under `--no-compress`, web-native `.mp4`+AAC clips are used as-is and ==are not
+copied or renamed== (avoids duplicating gigabytes); only transcoded clips land
+in `媒體/影片`.
 
-- Video: default `-c:v copy`; `--compress` → ==H.264 x264 `-crf 18 -preset
-  slow`==. ==H.264, NOT HEVC== — Firefox doesn't support HEVC and Chrome on
-  Windows needs a paid codec extension. No downscaling.
+- Video: default ==H.265 x265 `-crf 24 -preset medium -tag:v hvc1`== — screen
+  recordings measured 43–51% smaller than H.264 on motion segments
+  (2026-08-03). ==HEVC playback needs OS-level decode support on the viewing
+  machine== (Windows: HEVC Video Extensions + hardware decode; verified playing
+  in Chrome on the authoring machine 2026-08-03) — fine for the default
+  self-use case; ==sharing to machines you can't verify → `--codec h264`==
+  (x264 `-crf 18 -preset slow`, universal). No downscaling. `--no-compress`
+  restores the old copy-stream behavior.
 - Audio: AC-3 / DTS / … → `-c:a aac -b:a 192k`; already AAC or MP3 → copy. This
   is the fix for the silent-in-Chrome bug. Subtitles dropped.
-- Resumable: a valid prior output (AAC audio, and actually smaller under
-  `--compress`) is skipped. Originals are never touched.
+- Resumable: a valid prior output (AAC audio, and actually smaller when
+  compressing) is skipped. Originals are never touched.
 
 Full rationale for choosing pre-conversion over browser-side or server playback,
 plus the measured compression numbers, is in

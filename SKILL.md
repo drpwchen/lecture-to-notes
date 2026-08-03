@@ -228,6 +228,24 @@ it the caption↔frame check only warns. → `reference/note-spec.md`
 **Draft review exemption**: this output is machine-transcribed and synthesized —
 write to the inbox without showing a draft; the user reviews in Obsidian.
 
+### Step 15 — Web viewer export (default whenever there is video)
+
+```bash
+python <skill-dir>/scripts/build_single_talk_web.py "$OUT_DIR" --plan seg_plan.json
+# … Stage F writes the L3/ files … then:
+python <skill-dir>/scripts/build_single_talk_web.py "$OUT_DIR" --plan seg_plan.json --export
+```
+A single talk gets the synced HTML viewer by default, not just workshops. Write
+a segment plan (JSON list: seg/start/end/slug/title_zh) — ==content sections =
+more segments, not more headings==, the viewer builds exactly two chapters per
+segment. The script assembles manifest + `segments.json` + L2 slices + HUB
+skeleton from `transcript.json`; Stage F then writes one `L3_segNN_<slug>.md`
+per segment (==image embeds by basename only, timecodes `` `(V1 MM:SS)` ``==);
+`--export` runs `export_web.py`. Compression default is ==H.265 CRF 24==
+(self-use; `--codec h264` when sharing to machines you can't verify).
+Multi-talk workshops keep their own flow → `reference/segmented-mode.md`.
+→ `reference/pipeline.md#web-export`
+
 ## Edge cases
 
 - **Audio only, no deck** → transcript-only note using `# 逐段筆記` instead of

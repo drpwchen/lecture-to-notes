@@ -550,6 +550,46 @@ a page of embeds pointing at files that were never copied, with a green audit.
 [--template ...] [--vault ROOT] [--grounding DIR]` — the vendored auditor. See
 `note-spec.md` for what each mode enforces.
 
+## Web viewer export — single talk {#web-export}
+
+`build_single_talk_web.py <lecture_dir> --plan plan.json [--video FILE]
+[--name NAME] [--date DATE] [--course-type TYPE] [--hub-slug SLUG] [--force]
+[--export]`
+
+Assembles a single-talk lecture dir into the layout `export_web.py` expects
+(that exporter was written for multi-talk workshops, but a single talk exports
+fine — verified 2026-08-03: ==every segment's `files[]` points at the SAME
+video, timestamps are absolute seconds==, `media_parts` dedups by filename so
+the video is processed once and never split).
+
+The plan is a JSON list, one row per segment; `start`/`end` accept `"MM:SS"`,
+`"H:MM:SS"` or seconds; `region`/`type` optional:
+
+```json
+[{"seg": 1, "start": "00:00", "end": "01:00", "slug": "opening-problem",
+  "title_zh": "開場：三個問題", "region": "命題", "type": "discussion"}]
+```
+
+Writes `_raw/manifest.json` (one clip → `V1`), `_intermediate/seg/segments.json`
+(==a LIST, not a dict== — `normalize_segments` crashes on a dict), one
+`L2_segNN_<slug>.md` per segment (transcript entries sliced per segment, bullets
+grouped in 30-second buckets, `` `(V1 MM:SS)` `` absolute timecodes — ==the only
+format the viewer parses==), a `_HUB_<slug>.md` skeleton, and empty `L3/` +
+`figures/`. Existing files are kept unless `--force`, so re-running after a plan
+fix is safe. Guards: overlapping segments and duplicate slugs are refused;
+a plan that ends >60 s before the transcript does warns about the dropped tail;
+a segment with no transcript text warns.
+
+==L3 content is NOT generated here== — Stage F writes `L3_segNN_<slug>.md` per
+segment. Two format traps for that writer: image embeds ==basename only==
+(`![[fig.jpg]]`, never a vault path — `resolve_image_src` indexes `figures/` by
+basename), and ==content sections = more segments in the plan, not more
+headings== (the viewer builds exactly two chapters per segment: L2 + L3).
+
+`--export` runs `export_web.py` afterwards; it refuses while L3 files are
+missing (the viewer would ship without the 整理稿 layer). Compression defaults
+and flags → `segmented-mode.md#step9`.
+
 ## Multi-source alignment {#alignment}
 
 `media_capture_index.py <out.json> <DIR|LABEL=DIR> [...] [--utc-offset 8]

@@ -257,6 +257,17 @@ def build_plan(buckets, in_dir, out_dir):
             "the only step that costs tokens: read the stage outputs and write "
             "the vault note, then render embeds + finalize.", None)
 
+    if video:
+        add("web viewer export (default whenever there is video)",
+            "single talks get the synced HTML viewer too, not just workshops. "
+            "Write a segment plan (JSON list: seg/start/end/slug/title_zh), "
+            "assemble, have Stage F write the L3 files, then --export. "
+            "Compression default is H.265 CRF 24 (self-use); --codec h264 when "
+            "sharing to machines you can't verify.",
+            f'python {_q(os.path.join(scripts, "build_single_talk_web.py"))} '
+            f'{_q(out_dir)} --plan {_q(os.path.join(out_dir, "seg_plan.json"))} '
+            f'--export')
+
     # --- Things this router refuses to guess about ---------------------
     for p in buckets["convert_first"]:
         warnings.append(

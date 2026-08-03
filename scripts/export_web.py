@@ -41,17 +41,23 @@ Course name/date: --name / --date, else read from _HUB frontmatter.
 Video conversion (auto-selective): web-native clips (mp4+AAC) are used as-is (referenced at
 the course root); only non-playable containers or non-AAC audio (==AVCHD .MTS = AC-3 → silent
 in browser==) get an FFmpeg pass into 媒體/影片/<friendly>.mp4 (recorded in TIMELINE media_src).
-Default copies video + transcodes audio→AAC (fast, full size). `--compress` re-encodes video to
-small ==H.264 x264 CRF== (NOT HEVC — poor browser support) for a shareable set. Originals never
+Default re-encodes video to ==H.265 x265 CRF== (screen recordings: 43–51% smaller than H.264
+on motion segments, measured 2026-08-03) + audio→AAC. Playback needs HEVC decode support on
+the viewing machine (Windows: HEVC Video Extensions + hardware decode) — fine for the
+default self-use case; pass `--codec h264` when sharing to machines you can't verify.
+`--no-compress` skips re-encoding entirely (copy video, fast, full size). Originals never
 modified.
 
 Usage:
   python export_web.py <course_dir> [--out DIR] [--name NAME] [--date DATE]
-                       [--author NAME] [--compress] [--crf 18] [--remux] [--no-remux]
+                       [--author NAME] [--no-compress] [--codec hevc|h264] [--crf N]
+                       [--remux] [--no-remux]
   # --out      : override the support-folder path (HTML is written beside it as <name>.html).
   # --author   : name in the page footer. Default = config.yaml `export.author`;
   #              empty (the shipped default) omits the footer entirely.
-  # --compress : small shareable H.264 set (x264 CRF, no downscale). --crf 18=visually lossless.
+  # --no-compress : ship video streams as-is (old default). Compression is ON by default.
+  # --codec    : hevc (default, smallest) or h264 (universal playback, for sharing).
+  # --crf      : quality. Default 24 for hevc, 18 for h264 (≈ visually lossless each).
   # --remux    : force ALL clips through ffmpeg.   --no-remux : ship originals untouched.
 
 Requires pandoc + ffmpeg/ffprobe on PATH (checked up front, before any work).
@@ -69,6 +75,9 @@ from _common import atomic_write_json, load_config, require_binaries
 # Upgrade path = regenerate from the (standardized) COURSE dir, NOT in-place migration.
 SCHEMA_VERSION = 3          # 2: media_src + version stamps · 3: slide_blocks (slide-layer search)
 VIEWER_VERSION = "layout2/2026.08.03"
+
+CODEC_LABEL = {"hevc": "H.265", "h264": "H.264"}
+CRF_DEFAULT = {"hevc": 24, "h264": 18}   # measured ≈-equivalents, 2026-08-03
 
 # Video compatibility — only formats the browser can't play get -c copy remuxed.
 WEB_PLAYABLE_EXT = {".mp4", ".m4v", ".mov", ".webm", ".ogv", ".ogg"}
@@ -89,8 +98,18 @@ def build_argparser():
                          "empty = no footer)")
     ap.add_argument("--remux", action="store_true", help="force-process ALL clips to mp4 (default: auto — only non-web-playable formats)")
     ap.add_argument("--no-remux", action="store_true", help="never process (even .MTS); deploy original filenames as-is")
-    ap.add_argument("--compress", action="store_true", help="re-encode video to H.264 (x264 CRF) for a SMALL shareable set; default just copies video (fast, full size). Universal H.264 — NOT HEVC (poor browser support).")
-    ap.add_argument("--crf", type=int, default=18, help="x264 CRF for --compress (18=visually lossless, 20≈transparent+smaller). Default 18.")
+    ap.add_argument("--compress", action="store_true",
+                    help="(default since 2026-08-03; kept for backward compatibility)")
+    ap.add_argument("--no-compress", action="store_true",
+                    help="ship video streams as-is (copy, fast, full size) — the pre-2026-08 behavior")
+    ap.add_argument("--codec", choices=["hevc", "h264"], default="hevc",
+                    help="compression codec. hevc (x265, default): 43-51%% smaller on motion "
+                         "segments but playback needs HEVC decode on the viewing machine. "
+                         "h264 (x264): universal playback — use when sharing to machines "
+                         "you can't verify.")
+    ap.add_argument("--crf", type=int, default=None,
+                    help="quality for compression. Default 24 for hevc, 18 for h264 "
+                         "(≈ visually lossless each; measured equivalents 2026-08-03).")
     return ap
 
 
@@ -1030,8 +1049,14 @@ def copy_notes():
 def encode_one(src, out):
     aud = audio_codec_or_unknown(src, PROBE_PROBLEMS)
     acodec = ["-c:a", "copy"] if aud in WEB_AUDIO else ["-c:a", "aac", "-b:a", "192k"]
-    vcodec = (["-c:v", "libx264", "-crf", str(A.crf), "-preset", "slow", "-pix_fmt", "yuv420p"]
-              if A.compress else ["-c:v", "copy"])
+    # hevc gets `-tag:v hvc1` so QuickTime/Safari recognize the track.
+    if not A.compress:
+        vcodec = ["-c:v", "copy"]
+    elif A.codec == "hevc":
+        vcodec = ["-c:v", "libx265", "-crf", str(A.crf), "-preset", "medium",
+                  "-tag:v", "hvc1", "-pix_fmt", "yuv420p"]
+    else:
+        vcodec = ["-c:v", "libx264", "-crf", str(A.crf), "-preset", "slow", "-pix_fmt", "yuv420p"]
     cmd = [FFMPEG, "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0", "-sn"] + vcodec + acodec + [out]
     r = subprocess.run(cmd, capture_output=True)
     if r.returncode == 0:
@@ -1068,7 +1093,7 @@ def convert_videos(refs):
     """3. Browser-playable conversion (auto-selective). A clip gets an FFmpeg pass if its
     container isn't web-playable, OR its audio isn't browser-decodable (==AVCHD .MTS use
     AC-3, which no browser decodes — must transcode to AAC==), OR --compress / --remux.
-      video: --compress → H.264 x264 CRF (small, universal; NOT HEVC); else copy (fast, full size)
+      video: compressed by default (hevc x265 / --codec h264 x264); --no-compress → copy (fast, full size)
       audio: AC-3/DTS/… → AAC 192k; already AAC/MP3 → copy.  PGS/other subtitles dropped.
     Output → 媒體/影片/<friendly>.mp4. Web-native clips (mp4/AAC) are used untouched at the root.
     Returns the set of original filenames now served from the support folder."""
@@ -1084,7 +1109,7 @@ def convert_videos(refs):
         out = os.path.join(MEDIA_VID, VID_MAP[fn])
         if output_ok(out, src):
             remuxed.add(fn); continue
-        print(f"[encode {i}/{len(needs)}] {fn} -> {VID_MAP[fn]}{' (H.264 CRF%d)' % A.crf if A.compress else ''} …", flush=True)
+        print(f"[encode {i}/{len(needs)}] {fn} -> {VID_MAP[fn]}{' (%s CRF%d)' % (CODEC_LABEL[A.codec], A.crf) if A.compress else ''} …", flush=True)
         if os.path.exists(src) and encode_one(src, out):
             remuxed.add(fn)
     return remuxed
@@ -1214,6 +1239,10 @@ def main(argv=None):
     global CSS, JS_LOGIC, PROBE_PROBLEMS
 
     A = build_argparser().parse_args(argv)
+    # Compression is ON unless --no-compress; per-codec CRF default when --crf absent.
+    A.compress = not A.no_compress
+    if A.crf is None:
+        A.crf = CRF_DEFAULT[A.codec]
     # Preflight before any work: a course half-exported because pandoc is missing
     # is worse than a clear refusal on line one.
     require_binaries(PANDOC, FFMPEG, FFPROBE)
@@ -1333,7 +1362,7 @@ def main(argv=None):
                        "remuxed": sorted(remuxed)})
 
     nblk = len(tl["note_blocks"])
-    vmode = f"compress H.264 CRF{A.crf}" if A.compress else ("copy+AAC" if remuxed else "originals")
+    vmode = f"compress {CODEC_LABEL[A.codec]} CRF{A.crf}" if A.compress else ("copy+AAC" if remuxed else "originals")
     print(f"OK 影片筆記整合 ({VIEWER_VERSION}, schema v{SCHEMA_VERSION}) -> {HTML_OUT}")
     print(f"  support={SUPPORT}")
     print(f"  sections={len(present)} segments={len(tl['segments'])} note_blocks={nblk} "
