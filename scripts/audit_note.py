@@ -220,6 +220,46 @@ def _transcript_chars(path):
     return len(re.sub(r"\s+", "", t))
 
 
+# ---- degenerate-repetition tripwire (companion to the coverage gate: a note
+# could pass the char floor by repeating itself — rad-workflow's author hit
+# exactly this "重複無意義的文字" failure in batch runs). Two signals, both
+# calibrated on 560 accepted notes (410 lecture L3 + 150 vault 52Medicine):
+#   line-dup   — a normalized CONTENT line repeated ≥4× (structural repeats are
+#                excluded first: table rows, callout headers, backtick citations;
+#                unexcluded, legit notes hit 8–14 via those). Corpus after
+#                exclusion: 1/560 at 4, none higher. Real loops repeat 10–50×.
+#   diversity  — unique char-8grams ÷ total < 0.70 (corpus min 0.735; a looping
+#                paragraph lands 0.2–0.4). Only computed on ≥500 payload chars.
+REPEAT_LINE_MAX = 3          # >3 (i.e. ≥4 occurrences) → WARN
+REPEAT_DIVERSITY_FLOOR = 0.70
+
+
+def repetition_signals(text):
+    """(worst_line, count, diversity, payload_chars) for the note payload."""
+    from collections import Counter
+    t = re.sub(r"^---\n.*?\n---\n", "", text, count=1, flags=re.S)
+    t = re.sub(r"!\[\[[^\]]+\]\]", "", t)
+    t = re.sub(r"\[\[([^\]|]+)(\|[^\]]+)?\]\]", r"\1", t)
+    t = re.sub(r"`?\([^()]{0,30}\d{1,2}:\d{2}\)`?", "", t)
+    t = re.sub(r"https?://\S+", "", t)
+    lines = Counter()
+    for l in t.split("\n"):
+        s = l.strip()
+        if "|" in s or s.lstrip("> ").startswith("[!"):
+            continue    # table rows / callout headers repeat legitimately
+        s = re.sub(r"^[\s>*\-#\d.、]+", "", s).replace("`", "")
+        s = re.sub(r"\s+", "", s)
+        if len(s) >= 12:
+            lines[s] += 1
+    worst, count = ("", 0)
+    if lines:
+        worst, count = lines.most_common(1)[0]
+    flat = re.sub(r"\s+", "", t)
+    grams = [flat[i:i + 8] for i in range(len(flat) - 7)]
+    diversity = (len(set(grams)) / len(grams)) if grams else 1.0
+    return worst, count, diversity, len(flat)
+
+
 def transcript_chars_for(mode, seg_kind, seg_root, grounding_dir, note_path):
     """Locate the transcript(s) this note synthesizes and return their char count.
     lecture mode: <grounding_dir>/transcript.txt (single-lecture pipeline layout).
@@ -611,6 +651,18 @@ def audit(path, vault, mode, template, grounding_dir=None, min_coverage=COVERAGE
         else:
             add("WARN", "LEC C3 caption↔frame match",
                 "pass --grounding <project_dir> to auto-verify captions against frame OCR (C3)")
+
+    # ---------- degenerate repetition (all modes) ----------
+    worst, count, diversity, payload_n = repetition_signals(t)
+    rep_issues = []
+    if count > REPEAT_LINE_MAX:
+        rep_issues.append(f"line ×{count}: 「{worst[:40]}」")
+    if payload_n >= 500 and diversity < REPEAT_DIVERSITY_FLOOR:
+        rep_issues.append(f"8-gram diversity {diversity:.2f} < {REPEAT_DIVERSITY_FLOOR}")
+    add("WARN" if rep_issues else "PASS", "REP degenerate repetition",
+        ("; ".join(rep_issues) + " — looping/filler output; also defeats the "
+         "coverage floor by padding") if rep_issues
+        else f"max line-dup {count}, diversity {diversity:.2f}")
 
     # ---------- transcript coverage (lecture + lecture-seg L3) ----------
     if mode in ("lecture", "lecture-seg") and (mode == "lecture" or seg_kind == "l3"):

@@ -3,6 +3,20 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-08-03
+
+### Added
+
+- **Degenerate-repetition tripwire in `audit_note.py`** (all modes): WARN when a
+  normalized content line repeats ≥4× (table rows, callout headers and citation
+  lines are excluded first — those repeat legitimately) or when char-8-gram
+  diversity drops below 0.70. Catches looping/filler output, which would also
+  defeat the 0.2.0 coverage floor by padding. Calibrated on 560 accepted notes
+  (1 line-dup hit, 0 diversity hits; a genuinely looping paragraph lands at
+  diversity 0.03). *Failure mode reported from batch runs by
+  [jieyu166/rad-workflow](https://github.com/jieyu166/rad-workflow)'s author
+  (「重複無意義的文字」) — thanks again!*
+
 ## [0.2.0] — 2026-08-03
 
 ### Added

@@ -503,7 +503,12 @@ an anti-over-compression tripwire calibrated on 410 real segments where the
 median ratio is 0.36 and only the bottom ~2% fall under 0.10; a legitimately
 thin hands-on-demo segment is accepted consciously, a "90-min transcript,
 one-screen note" collapse is rewritten. Idea borrowed from jieyu166's
-rad-workflow Stage-1 coverage gate, recalibrated for synthesis).
+rad-workflow Stage-1 coverage gate, recalibrated for synthesis), ==degenerate
+repetition== (a content line repeated ≥4× after excluding table rows / callout
+headers / citation lines, or char-8-gram diversity <0.70 — looping/filler
+output, which would also defeat the coverage floor by padding; calibrated on
+560 accepted notes: 1 line-dup hit, 0 diversity hits, while a looping paragraph
+lands at diversity 0.03).
 
 `[review]`-only items (B3/B4 self-containment, C1/C3/C4 figure placement, D1–D3
 reference handling, E1 callout indentation) are never machine-checkable — they
