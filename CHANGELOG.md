@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] — 2026-08-05
+
+### Fixed
+
+- Timecodes pointing into an audio file are now clickable in the exported
+  viewer. The citation pattern listed only video extensions, so an audio-only
+  session — a recorder file with photographed slides, which this pipeline
+  supports as a first-class source — rendered every `(recording.mp3 03:23)` as
+  dead plain text. Nothing errored, because a non-match looks exactly like
+  prose. On a two-day conference with four audio-only afternoon talks, 312 of
+  536 timecodes were dead this way.
+
 ## [0.6.3] — 2026-08-05
 
 ### Fixed

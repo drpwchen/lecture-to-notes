@@ -451,7 +451,12 @@ def preprocess(md, seg):
 
     # supports `(V1 00:01)` (V-map), `(00004.MTS 03:12)` (raw filename, legacy), and the
     # approx variant `(V1 ⚠️approx 01:30)` / `(V1 approx 01:30)` (group 3 captures the marker)
-    md = re.sub(r'`?\((?:(V\d+)|([^()]+?\.(?:MTS|mts|mp4|MP4|mov|MOV|m2ts|M2TS|avi|AVI)))'
+    # Audio extensions belong here too: an audio-only session (a recorder file with
+    # photographed slides) cites `(錄音-240526_1119.mp3 03:23)`, and while those were
+    # missing from this list the citation stayed dead plain text — no error anywhere,
+    # since a non-match is indistinguishable from prose.
+    md = re.sub(r'`?\((?:(V\d+)|([^()]+?\.(?:MTS|mts|mp4|MP4|mov|MOV|m2ts|M2TS|avi|AVI'
+                r'|mp3|MP3|m4a|M4A|wav|WAV|aac|AAC)))'
                 r' +(?:(⚠️?\s*approx|approx)\s*)?(\d+):(\d{2})\)`?', ts, md)
 
     def wl(m):
