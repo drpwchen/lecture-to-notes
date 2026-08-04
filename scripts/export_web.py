@@ -359,8 +359,21 @@ def build_media_map(course, order, by):
                 images[fr] = f"{nn:02d}_{zh_slug(title)}_{seq:02d}{ext}"
                 owners[fr] = seg
     notes[os.path.splitext(HUB)[0]] = "00 目錄"
+    # Friendly video names are titled after whichever segment "owns" (first
+    # references) each file. The 全場總整理 overview segment sorts first
+    # (display_order 0) but its files[] is the union of every clip in the
+    # course — if it claimed ownership here, EVERY video in the course would
+    # get renamed "NN_全場總整理.mp4", breaking the resumable-cache match
+    # (output_ok looks for the OLD name) on any re-export where the raw
+    # source no longer exists to re-encode under the new name (hit
+    # 2026-08-04 on 3 already-delivered courses: media_src came back empty,
+    # orphaning the correctly-named mp4s still sitting on disk). Content
+    # segments claim ownership first; the overview only claims a file none
+    # of them reference (shouldn't normally happen).
     firstseg, seen = {}, []
-    for seg in order:
+    content_order = [seg for seg in order if by[seg].get('slug') != 'overview']
+    overview_order = [seg for seg in order if by[seg].get('slug') == 'overview']
+    for seg in content_order + overview_order:
         for fn in by[seg].get('files', []):
             if fn not in firstseg:
                 firstseg[fn] = seg; seen.append(fn)

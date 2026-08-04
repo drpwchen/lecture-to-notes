@@ -3,6 +3,25 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-08-04
+
+### Fixed
+
+- **Overview segment no longer hijacks friendly video-filename ownership.**
+  `export_web.py` names each remuxed clip after whichever segment first
+  references it; since the 全場總整理 overview sorts first (`display_order`
+  0) and its `files[]` is the union of every clip in the course, it was
+  claiming ownership of EVERY video, renaming all of them to
+  `NN_全場總整理.mp4`. On a re-export where the raw source no longer exists
+  to re-encode under the new name (common for older courses whose staging
+  directory was cleaned up after original delivery), this broke the
+  resumable-cache match, the re-encode failed, and the exported page's video
+  links went dead — orphaning correctly-named `.mp4` files still sitting on
+  disk. Content segments now claim naming ownership first; the overview only
+  claims a file none of them reference. Found and fixed 2026-08-04 while
+  retrofitting the overview segment onto already-delivered courses — 3 of a
+  5-course pilot batch broke this way and were re-exported clean after the fix.
+
 ## [0.5.0] — 2026-08-03
 
 ### Added
