@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] — 2026-08-05
+
+### Fixed
+
+- `audit_segmentation.py` compared timeline basenames against manifest `src`
+  values that may carry a subdirectory prefix. For those courses the two lists
+  never intersected, the order check found nothing, and the run fell through to
+  an INFO line saying the clip order "was corrected by real time" — about a
+  course it had not checked. Both sides are now compared as basenames. On a real
+  course this turned a clean-looking INFO into a REGENERATE naming four
+  genuinely out-of-order clips.
+
 ## [0.6.1] — 2026-08-05
 
 ### Fixed

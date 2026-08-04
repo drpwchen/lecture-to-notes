@@ -217,9 +217,15 @@ def main():
     # done and casts doubt on a correct result.
     order_issue = []
     if os.path.isfile(man_path):
-        by_file = {s["file"]: s for s in timed}
-        cur = [c["src"] for c in load(man_path).get("clips", [])]
-        want = [f for f in (s["file"] for s in timed) if f in cur]
+        # Compare on basenames: the timeline stores `file` as a basename while a
+        # manifest `src` may carry a subdirectory (Demo-Prac\00008.MTS). Matching
+        # the raw strings makes the intersection empty for those courses, so
+        # order_issue comes out empty and the run falls through to the INFO
+        # branch below — reporting "order was corrected" about a course nobody
+        # checked. A silent pass is the one outcome this audit must never give.
+        by_file = {os.path.basename(s["file"]): s for s in timed}
+        cur = [os.path.basename(c["src"]) for c in load(man_path).get("clips", [])]
+        want = [f for f in (os.path.basename(s["file"]) for s in timed) if f in cur]
         have = [f for f in cur if f in by_file]
         order_issue = [f for f, g in zip(have, want) if f != g]
     if order_issue:
