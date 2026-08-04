@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] — 2026-08-05
+
+### Fixed
+
+- `audit_note.py` exempts the overview segment from the transcript-coverage
+  gate. That segment's transcript is every other segment's concatenated, so a
+  one-page catalog scores about 0.01 against a 0.1 floor and can never pass —
+  a WARN on every course with an overview, which is how readers learn to skim
+  past WARNs. Per-segment L3s are still gated.
+
 ## [0.6.2] — 2026-08-05
 
 ### Fixed

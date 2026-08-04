@@ -665,7 +665,13 @@ def audit(path, vault, mode, template, grounding_dir=None, min_coverage=COVERAGE
         else f"max line-dup {count}, diversity {diversity:.2f}")
 
     # ---------- transcript coverage (lecture + lecture-seg L3) ----------
-    if mode in ("lecture", "lecture-seg") and (mode == "lecture" or seg_kind == "l3"):
+    # The 全場總整理 overview segment is exempt: its "transcript" is every other
+    # segment's concatenated, so a one-page catalog scores ~0.01 by construction
+    # and can never clear the floor. Warning on all of them trains readers to
+    # skim past WARNs, which costs more than the check earns here.
+    is_overview = "overview" in os.path.basename(path).lower()
+    if (mode in ("lecture", "lecture-seg") and not is_overview
+            and (mode == "lecture" or seg_kind == "l3")):
         tch = transcript_chars_for(mode, seg_kind, seg_root, grounding_dir, path)
         if tch > 0:
             nch = _note_payload_chars(t)
