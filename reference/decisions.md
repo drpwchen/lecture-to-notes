@@ -26,6 +26,7 @@ thing it is about, or when you want to relitigate a decision.
 - [Tier floors and suppression](#tier-floors)
 - [L2 model choice](#l2-model-choice)
 - [Browser playback and AVCHD](#browser-playback-and-avchd)
+- [Filename order is not time](#filename-order-is-not-time)
 - [Director batch dispatch](#batch-dispatch)
 - [Measurement discipline](#measurement-discipline)
 
@@ -395,6 +396,53 @@ CRF 20 ≈ −62 %. ==NVENC was rejected==: at matching quality its files came o
 *larger* than the source, useless for a small share. x264 on CPU is the size
 champion. ==Use H.264, not HEVC== — Firefox has no HEVC support and Chrome on
 Windows needs a paid codec extension.
+
+## Filename order is not time {#filename-order-is-not-time}
+
+**2026-08-04, 2024-05 Conference-Y (2 days, 20 AVCHD clips + 5 mp3 + 289 photos).**
+
+Segmentation ordered courses by the `manifest.json` clips array, which is the
+filename sort. Nobody had written down that this was an assumption; `build_L1.py`
+even stated it as fact in a comment — *"clip 編號 = manifest 陣列位置 = AVCHD 流水
+號時序"*. On a single-camera one-day lecture it happens to hold. Here it did not:
+
+- the five `.mp3` sorted between `00011.MTS` and `00012.MTS`, so **day-2
+  afternoon audio sat in the middle of day-2 morning video** inside
+  `L1_coarse.md` — 9 of 25 clips out of place
+- `<speaker>-1-` was written on the file that came SECOND
+- a two-day shoot means the camcorder counter restarts, so file numbers repeat
+
+The earlier repair attempt reached the right ORDER by reasoning from the printed
+agenda plus timestamps embedded in the mp3 filenames — but the agenda turned out
+to be no clock at all (day 1 ran ~25 min early, day 2 morning ~35 min late), so
+that was a lucky landing, not a method, and it still left three ⚠️ items open.
+
+**What actually fixed it — read every device's own clock:**
+
+1. ==AVCHD carries no container timestamp==, which is why this went unnoticed:
+   ffprobe showed nothing, so `.MTS` read as "no capture time" and the alignment
+   layer silently did not apply to conference footage at all. The clock is in
+   the stream's MDPM pack (`_mdpm.py`). Corroboration: `MDPM start + duration ==
+   mtime` on all 20 files (0.2–3.2 s) — which also proves ==AVCHD mtime is the
+   recording END==.
+2. ==Every device's clock was wrong differently==: camcorder +1 day +5m30s
+   (measured by transcript cross-correlation, 3 clips agreeing to ±3 s), Canon
+   stills +72m30s (measured by OCR-matching photos to slide text, 31 matches,
+   σ=30 s), recorder correct. Recipe:
+   `multi-camera.md#device-clock-calibration`.
+3. The date-off-by-one is the nastiest failure mode: hours and minutes stay
+   right, so every file looks individually plausible and only cross-device
+   comparison exposes it.
+
+**Payoffs beyond the ordering.** Two of the three open ⚠️ items were answered by
+measurement rather than argument (a 62-min audio stretch was proven to be the
+parallel track of a talk already on video — cross-correlation put the three video
+files at 495/2320/4145 s into it), and 289 photos nobody had placed turned out to
+be full slide decks for four audio-only talks.
+
+**Rules that came out of it** — SKILL.md HARD RULE 9, `course_timeline.py`, and
+`segmented-mode.md` Step 0a. ==Filenames are labels; agendas are intentions; only
+capture clocks are time — and clocks must be calibrated before they are trusted.==
 
 ## Director batch dispatch {#batch-dispatch}
 

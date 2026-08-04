@@ -208,6 +208,19 @@ def main():
                          "write null for the rest (default 240)")
     ap.add_argument("--utc-offset", type=float, default=8,
                     help="hours to add to UTC-stamped capture times (default 8)")
+    ap.add_argument("--capture-clock", metavar="'YYYY-MM-DD HH:MM:SS'",
+                    help="the recording's REAL start clock. Each image is then "
+                         "placed at its own EXIF time minus this, instead of "
+                         "being spread evenly — use it whenever the photos and "
+                         "the recording sit on a shared timeline "
+                         "(course_timeline.py). ==Photo clocks must already be "
+                         "corrected==: apply the device's measured offset to "
+                         "this value, or to the photos, but not to neither.")
+    ap.add_argument("--between", metavar="'START,END'",
+                    help="keep only images captured in this window, given in "
+                         "the PHOTO device's own clock (EXIF as written). Lets "
+                         "one day-long photo folder be split across sessions "
+                         "without copying it N times.")
     args = ap.parse_args()
 
     if not os.path.isdir(args.img_dir):
@@ -252,6 +265,28 @@ def main():
         dt, src, err = probe_capture(src_path, args.utc_offset)
         probed.append({"name": name, "path": src_path, "dt": dt,
                        "order_source": src, "probe_error": err})
+
+    # --between: take only the photos shot during ONE session. Photographers
+    # dump a whole day into a single folder, so "one folder = one talk" is the
+    # exception; without this you either mis-time the strays or copy gigabytes
+    # into per-session staging folders just to split them.
+    if args.between:
+        try:
+            lo_s, _, hi_s = args.between.partition(",")
+            lo = datetime.datetime.fromisoformat(lo_s.strip())
+            hi = datetime.datetime.fromisoformat(hi_s.strip())
+        except ValueError:
+            sys.exit("ERROR: --between wants 'START,END' as two ISO datetimes "
+                     f"in the PHOTO device's own clock; got {args.between!r}")
+        keep = [p for p in probed if p["dt"] and lo <= p["dt"] <= hi]
+        dropped = len(probed) - len(keep)
+        print(f"--between {lo} .. {hi}: kept {len(keep)}, dropped {dropped}")
+        if not keep:
+            sys.exit("ERROR: no image falls in that window — check whether the "
+                     "window is in the photo device's clock (EXIF as written) "
+                     "or in corrected real time; they differ by the device's "
+                     "measured offset.")
+        probed = keep
 
     n_exif = sum(1 for p in probed if p["order_source"] == "exif")
     n_mtime = sum(1 for p in probed if p["order_source"] == "mtime")
@@ -326,13 +361,41 @@ def main():
     per_slide_s = (args.audio_duration_sec / n) if args.audio_duration_sec else None
     has_audio = per_slide_s is not None
 
+    # --capture-clock: real time instead of an even spread ------------------
+    # Evenly spreading is a fabricated timing that only looks right on average.
+    # Photographers shoot in bursts: on the 2024-05 Conference-Y sessions the median
+    # gap was 22–52 s but the largest was 110–452 s, so an even spread puts
+    # slides minutes away from the words they belong to. When the recording's
+    # own start clock is known, each photo's offset is simply
+    # `EXIF - recording_start` — a measurement, not an interpolation.
+    rec_start = None
+    if args.capture_clock:
+        try:
+            rec_start = datetime.datetime.fromisoformat(args.capture_clock)
+        except ValueError:
+            sys.exit("ERROR: --capture-clock wants 'YYYY-MM-DD HH:MM:SS' "
+                     f"(the recording's real start), got {args.capture_clock!r}")
+        no_exif = [p["name"] for p in ordered if not p["dt"]]
+        if no_exif:
+            sys.exit("ERROR: --capture-clock needs a capture time on every "
+                     f"image; {len(no_exif)} have none: {', '.join(no_exif[:5])}"
+                     "\n  Without it their position would be invented, which is "
+                     "the failure this option exists to avoid.")
+        has_audio = True
+
     out = []
     t0 = time.time()
     budget_hit = False
     for i, p in enumerate(ordered):
         img_path = p["staged"]
 
-        if has_audio:
+        if rec_start is not None:
+            ts_start = max(0, int((p["dt"] - rec_start).total_seconds()))
+            nxt = ordered[i + 1]["dt"] if i + 1 < n else None
+            ts_end = (max(ts_start, int((nxt - rec_start).total_seconds()))
+                      if nxt else (args.audio_duration_sec or ts_start))
+            time_str = f"{fmt_hms(ts_start)}-{fmt_hms(ts_end)}"
+        elif has_audio:
             ts_start = int(i * per_slide_s)
             ts_end = int((i + 1) * per_slide_s)
             time_str = f"{fmt_hms(ts_start)}-{fmt_hms(ts_end)}"

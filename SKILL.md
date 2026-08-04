@@ -46,7 +46,17 @@ page is the map; detail lives in `reference/`, one topic per file.
    one subagent and Step 10 synthesis as a separate fresh subagent, spawned only
    after `slides_grounded.json` exists. A single subagent bounces during the long
    GPU waits and burns 30+ min of wall time per lecture.
-9. ==🚫 PHI red line==: if the recording contains patient-identifiable content
+9. ==Order material by REAL CAPTURE TIME — never by filename, never by the
+   printed agenda.== Filenames are labels, not clocks: a camcorder counter
+   restarts across days (a two-day shoot has two `00000`), a recorder's
+   `240526_1119.mp3` sorts into the middle of the video files, and on-site
+   `-1-`/`-2-` labels get stuck on the wrong file. Run
+   `scripts/batch/course_timeline.py` BEFORE segmenting any multi-source course;
+   `manifest.json` clip order and `L1_coarse.md` section order must both be
+   built from it. An agenda is not a clock either — the 2024-05 Conference-Y
+   conference ran ~25 min early on day 1 and ~35 min late on day 2, while its
+   break gaps matched to the minute.
+10. ==🚫 PHI red line==: if the recording contains patient-identifiable content
    (case discussion, ward rounds, named patients), transcribe LOCAL ONLY — drop
    `--engine groq`. When unsure, ask; default to local.
 
@@ -71,8 +81,12 @@ python <skill-dir>/scripts/route_inputs.py <material_dir> [--recursive] [--out-d
 | One long recording + many phone clips/photos | per source | `reference/multi-camera.md` |
 | `.pptx` / `.docx` / `.key` | — | convert to PDF yourself first; there is no conversion step here |
 
-==Multi-source contract==: when two or more independent sources are present, run
-`media_capture_index.py --emit-alignment alignment.json` first.
+==Multi-source contract==: when two or more independent sources are present,
+establish the timeline BEFORE anything else — `course_timeline.py <course_dir>`
+for a course folder with a manifest (it writes `_seg/real_timeline.json`, maps
+photos onto the recordings, and with `--reorder-manifest` fixes clip order at
+the root), or `media_capture_index.py --emit-alignment alignment.json` for a
+loose material folder.
 ==Capture timestamps are HYPOTHESES; transcript cross-correlation
 (`xcorr_media_offsets.py`) is EVIDENCE.== A source whose `reliable` flag is false
 got its start from mtime or has none — it must not be aligned on. Nothing is ever
@@ -323,8 +337,11 @@ rather than less output (`reference/decisions.md#optional-dependency-degradation
     ├── ground_slides.py  flag_asr_suspects.py  make_glossary.py  build_real_words.py
     ├── render_embeds.py  finalize_to_vault.py  audit_note.py  export_web.py
     ├── media_capture_index.py  xcorr_media_offsets.py  query_near_field.py
+    ├── _mdpm.py                  AVCHD .MTS recording clock (no container tag)
     ├── adapters/    surya_adapter.py        (production OCR adapters)
-    ├── batch/       build_L1 · split_segments · split_L1_by_segment · add_dhash ·
+    ├── batch/       course_timeline (real-time ordering authority) ·
+    │                audit_segmentation (is the proposal still valid?) ·
+    │                build_L1 · split_segments · split_L1_by_segment · add_dhash ·
     │                vlm_cache · detect_language · detect_language_audio ·
     │                phi_mask · process_slide_deck     (generic batch layer)
     ├── layout2/     viewer.css, viewer.js   (web viewer assets, edited verbatim)

@@ -10,6 +10,56 @@ All notable changes to this project are documented here. This project follows
 - README (both languages) now links back to the beginner series and to the post
   explaining this pipeline. No runtime change.
 
+## [0.6.0] — 2026-08-05
+
+Real capture time becomes the ordering authority. Segmentation used to be
+ordered by the manifest's clip array — which is the filename sort — and on a
+two-day, three-device conference that put the afternoon before the morning.
+
+### Added
+
+- **`scripts/batch/course_timeline.py`** — one real-time timeline per course
+  across every capture device, with `--reorder-manifest` to fix clip order at
+  the root, and photos mapped onto the recordings they were shot during. It
+  refuses to reorder when any clip has no trustworthy time, rather than
+  inventing a position for it.
+- **`scripts/_mdpm.py`** — reads the recording clock out of AVCHD `.MTS`
+  streams. **An AVCHD camcorder writes no container timestamp at all**, so
+  `ffprobe` reports nothing and every `.MTS` used to read as "no capture time":
+  the whole alignment layer was silently inert on conference footage, which is
+  overwhelmingly AVCHD. Reads progressively (256 KB first), because originals
+  often live on slow network storage.
+- **`scripts/batch/audit_segmentation.py`** — after the order is fixed, decides
+  mechanically whether an existing segmentation proposal is still usable:
+  `OK` / `REVIEW` / `REGENERATE`, from staleness, source coverage, split
+  recordings vs real breaks, parallel tracks, and photo availability.
+- **`media_capture_index.py --clock-offset SELECTOR=SECONDS`** — apply a
+  *measured* per-device clock correction; the device's own claim is preserved
+  in `capture_raw_start`. Recorder filenames (`…240526_1119.mp3`) now count as
+  a capture-time source, and `mtime` may refine their seconds only when it
+  falls inside the minute the device itself named.
+- **`build_slides_from_images.py --capture-clock` / `--between`** — place each
+  photo at its own EXIF time minus the recording start instead of spreading
+  images evenly across the audio, and split one day-long photo folder across
+  sessions without copying it once per session.
+
+### Changed
+
+- `build_L1.py` prints each clip's absolute capture clock in its section
+  heading, and no longer asserts in a comment that array position equals
+  chronological order.
+- `reference/multi-camera.md` gains a device-clock-calibration section: every
+  device has its own clock and any of them can be wrong. Offsets must be
+  *measured* — transcript cross-correlation for anything with audio, OCR
+  slide-text matching for photos — and validated against sources that took no
+  part in the calibration.
+- `reference/segmented-mode.md` gains Step 0a: build the timeline before L1.
+  It also records that a printed agenda is not a clock (one conference ran
+  ~25 min early on day one and ~35 min late on day two, while its break gaps
+  matched to the minute).
+- Documented that **AVCHD `mtime` is the recording END**, not the start —
+  treating it as a start is wrong by the clip's entire duration.
+
 ## [0.5.2] — 2026-08-04
 
 ### Fixed

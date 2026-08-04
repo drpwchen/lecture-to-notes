@@ -105,6 +105,54 @@ teach and practice cross-linked `↔ [[L3_segNNx_…]]`. *case-discussion* → o
 *conference* → per-talk mini-L3 under the Hub, strict speaker table, ⚠️ any
 unconfirmed affiliation.
 
+## Step 0a — Real timeline prerequisite {#step0a}
+
+==Before L1, before anything: establish the real capture time of every source.==
+
+```bash
+python <skill-dir>/scripts/batch/course_timeline.py "<COURSE>" \
+    [--photos "<照片資料夾>" ...] [--clock-offset '*.MTS=-86730'] [--reorder-manifest]
+```
+
+Writes `_seg/real_timeline.json` and reports how many clips sit in the wrong
+place in `manifest.json`. ==Clip order is the ordering authority for everything
+downstream== — `build_L1.py` walks the manifest array, so a mis-ordered manifest
+puts the afternoon before the morning inside `L1_coarse.md`, and every agent
+that reads it inherits an order that never happened. On the 2024-05 Conference-Y
+course, 9 of 25 clips were out of place: the five `.mp3` recordings sorted
+between `00011.MTS` and `00012.MTS` purely because `2` < `0`… in the filename.
+
+Rules:
+- ==Filenames are labels, not clocks.== A camcorder counter restarts across
+  days; on-site `-1-`/`-2-` labels get stuck on the wrong file (that course had
+  `<speaker>-2-` on the file that came FIRST, proven by MDPM to the second).
+- ==Do not use the printed agenda to order anything.== Same course: day 1 ran
+  ~25 min ahead of the programme, day 2 morning ~35 min behind. Break GAPS,
+  by contrast, matched to the minute and are good corroboration.
+- Multiple devices → calibrate their clocks first, by measurement:
+  `multi-camera.md#device-clock-calibration`. ==Never pass a guessed
+  `--clock-offset`.==
+- ==Photos belong on the timeline too.== They are usually shots of the slides,
+  so an audio-only talk with a photo folder is not slide-less: it is a Path
+  B-images talk. That course had 289 unused photos covering four audio-only
+  sessions at 22–52 s intervals.
+- After `--reorder-manifest`, ==rebuild `_L1/`== — it was written in the old
+  order.
+
+Then, for a course that ALREADY has a proposal, decide mechanically whether it
+survived the reorder:
+
+```bash
+python <skill-dir>/scripts/batch/audit_segmentation.py "<COURSE>" [--json OUT]
+```
+
+`REGENERATE` = the proposal predates the timeline or the reorder, so the
+evidence it reasoned from is gone — re-run the Step-1 agent. `REVIEW` = usable,
+but something needs a human call (parallel tracks, photos not yet ingested,
+sources with no capture time). `OK` = consistent with the clock. ==Re-proposing
+every course is expensive and trusting a proposal written against a wrong order
+is worse; this is what tells the two apart.==
+
 ## Step 0 — L1 prerequisite {#step0}
 
 Needs `<COURSE>/_L1/L1_coarse.md` and a state file recording that L1 was built
@@ -119,12 +167,19 @@ downstream step inherits the damage.
 
 ## Step 1 — Segmentation (propose → user confirms) {#step1}
 
-Spawn one analysis agent (sonnet) to read `L1_coarse.md`, the manifest
-(clip → source video filename), and any existing L2 for speaker hints, then
-propose a table:
+Spawn one analysis agent (sonnet) to read `_seg/real_timeline.json` (Step 0a),
+`L1_coarse.md`, the manifest (clip → source video filename), and any existing L2
+for speaker hints, then propose a table:
 
-`段# | 來源影片(檔名)+時間範圍 | 講者(⚠️ if unsure, NEVER fabricate) | 主題 |
-類型(static slide-driven / dynamic demo-live-scan)`
+`段# | 真實時間範圍(實測時鐘) | 來源影片(檔名) | 講者(⚠️ if unsure, NEVER
+fabricate) | 主題 | 類型(static slide-driven / dynamic demo-live-scan)`
+
+==Segment order = real capture order, and each segment carries its absolute
+clock==, not just an in-file `MM:SS`. Absolute time is what makes a boundary
+checkable: consecutive AVCHD parts chain end-to-start within a second (so they
+are ONE talk), while a real speaker change leaves a gap, and a 30-minute gap is
+a break. The 2024-05 Conference-Y proposal's whole "is this session morning or
+afternoon?" dispute evaporated the moment real clocks were on the table.
 
 plus a one-line boundary rationale per cut and a course-level `course_type`.
 ==Classify static vs dynamic PER SEGMENT== — one course holds both. A Q&A or

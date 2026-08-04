@@ -6,11 +6,26 @@
 Capture time source of truth, in order:
   1. video: `com.apple.quicktime.creationdate` (carries the +08:00 offset)
   2. video: `creation_time` (UTC — this script adds --utc-offset hours)
-  3. photo: EXIF DateTimeOriginal (36867), else DateTime (306)
+  3. video: AVCHD `.MTS` — the MDPM pack inside the stream (`_mdpm.py`).
+     ==An AVCHD camcorder writes no container timestamp==, so without this every
+     .MTS reads as "no capture time" and the alignment layer goes dark on
+     conference footage, which is nearly always AVCHD.
+  4. audio: a timestamp embedded in the FILENAME (`…240526_1119…`) — voice
+     recorders name files from their own clock, and that is a device claim, not
+     a filesystem artefact
+  5. photo: EXIF DateTimeOriginal (36867), else DateTime (306)
 
 ==Never use file mtime.== A zip/Drive/Immich round-trip rewrites mtime to the
 upload time; on the IMPS 2026-07 batch every mtime was hours off while every
 QuickTime creationdate was right to the second.
+
+==Every device has its own clock, and clocks are wrong.== On the 2024-05 增生醫
+學會 batch three devices disagreed: the camcorder by +1 day +5m30s, a Canon
+stills camera by +72m30s, against a voice recorder that turned out to be right.
+`--clock-offset` applies a MEASURED per-device correction; see
+`reference/multi-camera.md` §device-clock-calibration for how to measure one.
+==Never guess an offset== — an assumed one is how material lands in the wrong
+session.
 
 ==The timestamp is the START of the recording, not the end.== Measured on that
 batch: for each source recording, the implied recording start computed from 4–13
@@ -41,10 +56,11 @@ two clocks is lying, and which one is a judgement call — on the IMPS 2026-07
 batch an assumed start was 44 minutes off and silently mis-assigned every clip.
 Conflicts are a warning, not an error: the run still exits 0.
 """
-import argparse, datetime, json, os, subprocess, sys
+import argparse, datetime, fnmatch, json, os, re, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import atomic_write_json, match_stem, require_binaries
+from _mdpm import is_avchd, parse_mdpm
 
 VIDEO = (".mov", ".mp4", ".m4v", ".mts", ".avi", ".mkv")
 PHOTO = (".jpg", ".jpeg", ".heic", ".png", ".tif", ".tiff")
@@ -55,6 +71,48 @@ AUDIO = (".m4a", ".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma")
 
 # Claimed vs measured offsets further apart than this are a conflict, not drift.
 CONFLICT_TOLERANCE_S = 5.0
+
+
+# Voice recorders (Sony/Olympus/Zoom/phone apps) name the file from their own
+# clock. Accepts 240526_1119 / 20240526_111936 / 2024-05-26_11-19, anywhere in
+# the name. Two-digit years are read as 20xx — these are recordings, not
+# archives from 1998.
+FILENAME_TS = re.compile(
+    r"(?<!\d)(\d{2}|\d{4})[-_]?(\d{2})[-_]?(\d{2})[ _T-]+(\d{2})[-:]?(\d{2})(?:[-:]?(\d{2}))?(?!\d)")
+
+
+def parse_filename_time(name):
+    """-> datetime from a timestamp embedded in the filename, else None."""
+    for m in FILENAME_TS.finditer(name):
+        y, mo, d, hh, mm, ss = m.groups()
+        y = int(y) + 2000 if len(y) == 2 else int(y)
+        try:
+            return datetime.datetime(y, int(mo), int(d), int(hh), int(mm),
+                                     int(ss or 0))
+        except ValueError:
+            continue     # e.g. a resolution or bitrate that looks like a date
+    return None
+
+
+def refine_seconds_with_mtime(path, dt):
+    """Recover the SECONDS of a filename timestamp, when mtime corroborates it.
+
+    A recorder filename gives only `…_1119`, i.e. minute precision. This is the
+    one place mtime is admissible: if mtime falls in the very same minute the
+    device itself named the file, mtime is that device writing the file at
+    record-start, not a copy artefact — a zip/sync round-trip would have to
+    land inside a 60 s window to fake it. Corroborated on the 2024-05 Conference-Y
+    batch: 5 of 5 recordings had mtime in the filename's minute.
+
+    Returns (datetime, source_label). Falls back to the unrefined value.
+    """
+    try:
+        mt = datetime.datetime.fromtimestamp(os.path.getmtime(path))
+    except OSError:
+        return dt, "filename"
+    if mt.replace(second=0, microsecond=0) == dt.replace(second=0, microsecond=0):
+        return mt.replace(microsecond=0), "filename+mtime-seconds"
+    return dt, "filename"
 
 
 def probe_video(path):
@@ -68,9 +126,17 @@ def probe_video(path):
         return {}
     fmt = d.get("format", {})
     tags = {k.lower(): v for k, v in (fmt.get("tags") or {}).items()}
+    raw = tags.get("com.apple.quicktime.creationdate") or tags.get("creation_time")
+    model = tags.get("com.apple.quicktime.model")
+    if not raw and is_avchd(path):
+        # AVCHD carries the clock in the stream, not the container.
+        dt = parse_mdpm(path)
+        if dt:
+            return {"duration_s": float(fmt.get("duration") or 0),
+                    "creation_raw": dt.isoformat(sep=" "),
+                    "time_source_hint": "avchd-mdpm", "model": model or "AVCHD"}
     return {"duration_s": float(fmt.get("duration") or 0),
-            "creation_raw": tags.get("com.apple.quicktime.creationdate") or tags.get("creation_time"),
-            "model": tags.get("com.apple.quicktime.model")}
+            "creation_raw": raw, "model": model}
 
 
 def probe_photo(path):
@@ -120,6 +186,50 @@ def to_local(raw, utc_offset):
         return None, None
 
 
+def parse_clock_offsets(specs):
+    """['CANON*=-4350', 'label=+330'] -> [(selector, seconds), ...]."""
+    out = []
+    for s in specs or []:
+        sel, _, val = s.rpartition("=")
+        if not sel:
+            sys.exit(f"ERROR: --clock-offset wants SELECTOR=SECONDS, got {s!r}")
+        try:
+            out.append((sel, float(val)))
+        except ValueError:
+            sys.exit(f"ERROR: --clock-offset seconds not a number in {s!r}")
+    return out
+
+
+def apply_clock_offsets(rows, offsets):
+    """Shift capture times by a MEASURED per-device correction.
+
+    A row matches a selector when the selector fnmatches its source label, its
+    model, or its filename — so one flag can address a folder, a camera body or
+    a filename pattern. The original stays in `capture_raw_start`: a corrected
+    time that hides what the device actually claimed is unauditable.
+    """
+    n = 0
+    for r in rows:
+        for sel, secs in offsets:
+            if not any(fnmatch.fnmatch(str(v or ""), sel)
+                       for v in (r.get("source"), r.get("model"), r["file"])):
+                continue
+            r["clock_offset_s"] = secs
+            if r.get("start"):
+                r["capture_raw_start"] = r["start"]
+                base = datetime.datetime.fromisoformat(r["start"])
+                r["start"] = (base + datetime.timedelta(seconds=secs)
+                              ).isoformat(sep=" ")
+                if r.get("end"):
+                    r["end"] = (datetime.datetime.fromisoformat(r["end"])
+                                + datetime.timedelta(seconds=secs)
+                                ).isoformat(sep=" ")
+                r["time_source"] = (r.get("time_source") or "?") + "+offset"
+            n += 1
+            break
+    return n
+
+
 def _stem(name):
     return os.path.splitext(os.path.basename(name))[0]
 
@@ -151,7 +261,9 @@ def build_alignment(rows, xcorr_path=None):
         kind = {"photo": "image"}.get(r["kind"], r["kind"])
         start = r.get("start")
         if start:
-            src = "exif" if kind == "image" else "ffprobe"
+            # Prefer what the probe actually used (avchd-mdpm / filename / exif);
+            # fall back to the coarse per-kind label for older callers.
+            src = r.get("time_source") or ("exif" if kind == "image" else "ffprobe")
         else:
             # Last-resort hypothesis, recorded so the gap is visible — and
             # marked unreliable so nothing downstream may act on it.
@@ -168,7 +280,10 @@ def build_alignment(rows, xcorr_path=None):
             "capture_start": start,
             "start_source": src,
             "duration_s": (r.get("duration_s") or None),
-            "reliable": src in ("exif", "ffprobe"),
+            # mtime and "nothing" are the unreliable ones; a device-written
+            # clock (container tag, EXIF, AVCHD MDPM, recorder filename) is a
+            # real claim — possibly a wrong one, which is what xcorr is for.
+            "reliable": not src.startswith(("mtime", "none")),
         }
         sources.append(s)
         by_file[_stem(r["file"])] = s
@@ -309,6 +424,13 @@ def main():
                          "offsets are compared and disagreements > "
                          f"{CONFLICT_TOLERANCE_S:.0f}s are flagged as conflicts "
                          "(warning, never an auto-correction)")
+    ap.add_argument("--clock-offset", action="append", metavar="SELECTOR=SECONDS",
+                    help="apply a MEASURED per-device clock correction, e.g. "
+                         "'*.MTS=-86730' or 'Canon*=-4350'. SELECTOR fnmatches "
+                         "the source label, the model, or the filename. The "
+                         "device's own claim is kept in capture_raw_start. "
+                         "==Only ever pass a measured offset== — how to measure "
+                         "one is in reference/multi-camera.md.")
     a = ap.parse_args()
     require_binaries("ffprobe")
     if a.xcorr_results and not a.emit_alignment:
@@ -332,18 +454,26 @@ def main():
                 # the alignment view — an audio-only room recording is usually
                 # the anchor everything else is aligned to.
                 ainfo = probe_video(p)
-                adt, _asrc = to_local(ainfo.get("creation_raw"), a.utc_offset)
+                adt, asrc = to_local(ainfo.get("creation_raw"), a.utc_offset)
+                if not adt:
+                    # A voice recorder usually writes no container tag but does
+                    # name the file from its clock.
+                    adt = parse_filename_time(os.path.basename(p))
+                    if adt:
+                        adt, asrc = refine_seconds_with_mtime(p, adt)
                 audio_rows.append({
                     "source": label or os.path.basename(os.path.normpath(d)),
                     "file": os.path.basename(p), "path": p, "kind": "audio",
                     "duration_s": round(ainfo.get("duration_s") or 0, 1),
                     "start": adt.isoformat(sep=" ") if adt else None,
+                    "time_source": asrc if adt else None,
                 })
                 continue
             if not kind:
                 continue
             info = probe_video(p) if kind == "video" else probe_photo(p)
             dt, src = to_local(info.get("creation_raw"), a.utc_offset)
+            src = info.get("time_source_hint") or src
             rows.append({
                 "source": label or os.path.basename(os.path.normpath(d)),
                 "file": os.path.basename(p), "path": p, "kind": kind,
@@ -356,6 +486,11 @@ def main():
                 "creation_raw": info.get("creation_raw"),
                 "error": info.get("error"),
             })
+    n_shift = apply_clock_offsets(rows + audio_rows,
+                                  parse_clock_offsets(a.clock_offset))
+    if n_shift:
+        print("applied a measured clock offset to %d source(s); their device's "
+              "own claim is kept in capture_raw_start" % n_shift)
     # Timed files first in chronological order, then the ones with no capture
     # time, alphabetically. (The old key sorted None as the string "9", which
     # happened to work only because ISO dates start with "2".)

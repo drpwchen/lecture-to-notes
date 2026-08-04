@@ -83,3 +83,4 @@ likely a fix lands in only one of them.
 | Date | Event |
 |---|---|
 | 2026-08-02 | Initial export. 56 manifest entries; 6 transforms + 1 override. |
+| 2026-08-05 | v0.6.0 real-timeline pass. 60 entries: 3 created (`_mdpm.py`, `batch/course_timeline.py`, `batch/audit_segmentation.py`), 7 updated. ==De-identification was done UPSTREAM this time==: the new docs and code comments originally named a real conference and four real speakers, and were rewritten in the skill itself to `Conference-Y` / `<speaker>` before syncing, so no new transform was needed. That is the direction this ledger recommends above — keep doing it that way. |

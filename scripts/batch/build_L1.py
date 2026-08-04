@@ -19,6 +19,20 @@ def ts(s):
     return f"{s // 60:02d}:{s % 60:02d}"
 
 
+def clock(c):
+    """The clip's real capture start, when course_timeline.py has established one.
+
+    ==Section order here is manifest order, and manifest order is only the
+    truth once course_timeline.py has sorted it by real capture time.== It used
+    to be assumed that array position == AVCHD serial == chronology; on a
+    two-day conference with a second recorder that assumption put the afternoon
+    before the morning, and every agent reading this file inherited the wrong
+    order. Printing the absolute clock lets the reader check rather than trust.
+    """
+    t = c.get("capture_start")
+    return f" `{t}`" if t else ""
+
+
 def build(xlf_dir, gran, fig_dir, fig_rel):
     man = json.load(open(os.path.join(xlf_dir, "manifest.json"), encoding="utf-8"))
     out = [f"# L1 逐字稿↔投影片對應 — {man['name']}",
@@ -33,7 +47,8 @@ def build(xlf_dir, gran, fig_dir, fig_rel):
             # audio-only clip (no slides): emit transcript-only L1
             segs = json.load(open(tp, encoding="utf-8")) if os.path.exists(tp) else []
             if segs:
-                out.append(f"\n## clip {ci:02d} — {c['name']} [{c.get('src', '?')}] (純音訊)\n")
+                out.append(f"\n## clip {ci:02d} — {c['name']} [{c.get('src', '?')}]"
+                           f"{clock(c)} (純音訊)\n")
                 for s in segs:
                     txt = (s.get("text") or "").strip()
                     if txt:
@@ -52,10 +67,7 @@ def build(xlf_dir, gran, fig_dir, fig_rel):
         # promising "nothing dropped". Keep the frame; render_slide_event() below
         # falls back to raw quick_text when vlm_signals/visible_labels are absent.
 
-        # `src` 一併印出：clip 編號 = manifest 陣列位置 = AVCHD 流水號時序
-        # (clip_order.py)，但檔名才是分段提案要引用的真實來源 —— 印在標題上，
-        # 分段 agent 就不必自己回去對照 manifest。
-        out.append(f"\n## clip {ci:02d} — {c['name']} [{c.get('src', '?')}]\n")
+        out.append(f"\n## clip {ci:02d} — {c['name']} [{c.get('src', '?')}]{clock(c)}\n")
         if not segs and not slides:
             out.append("(此 clip 無逐字稿與投影片 — 可能為靜音/空白片段)\n")
             continue
