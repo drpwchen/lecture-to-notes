@@ -3,7 +3,18 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.6.1] — 2026-08-05
+
+### Fixed
+
+- `course_timeline.py --reorder-manifest` crashed with a `KeyError` on any
+  course whose manifest references clips inside a subdirectory, e.g.
+  `Demo-Prac\00008.MTS`: the sort keyed on the clip's `src` against a dict
+  built from bare filenames. The quieter half of the same bug was worse — two
+  clips in different subdirectories that share a basename (what you get when a
+  second camera card restarts its numbering) would both have resolved to one
+  capture time, with no error. The sort now keys on the manifest index, which
+  is unique by construction.
 
 ### Documentation
 

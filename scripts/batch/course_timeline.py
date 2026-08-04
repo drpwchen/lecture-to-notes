@@ -215,12 +215,15 @@ def main():
         bak = man_path + ".bak-timeline-" + datetime.date.today().strftime("%Y%m%d")
         if not os.path.exists(bak):
             shutil.copy2(man_path, bak)
-        by_file = {r["file"]: r for r in chrono}
-        man["clips"] = sorted(man["clips"],
-                              key=lambda c: by_file[c["src"]]["start"])
-        for i, c in enumerate(man["clips"]):
+        # Key by manifest_idx, not filename: `src` may carry a subdir prefix
+        # (Demo-Prac\00008.MTS) and basenames can collide across subdirs, so a
+        # filename-keyed dict either KeyErrors or silently maps the wrong row.
+        start_by_idx = {r["manifest_idx"]: r["start"] for r in chrono}
+        order = sorted(range(len(man["clips"])), key=lambda i: start_by_idx[i])
+        man["clips"] = [man["clips"][i] for i in order]
+        for i, (c, old_i) in enumerate(zip(man["clips"], order)):
             c["idx"] = i
-            c["capture_start"] = by_file[c["src"]]["start"]
+            c["capture_start"] = start_by_idx[old_i]
         atomic_write_json(man_path, man, indent=1)
         print("manifest reordered by real time; backup -> %s" % os.path.basename(bak))
         print("==rebuild anything derived from clip order== (build_L1.py, and "
