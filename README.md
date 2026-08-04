@@ -288,6 +288,21 @@ acronyms compiled from a local reference corpus, used only to decide whether an
 ASR token looks like a real word. Regenerate them from your own corpus with
 `scripts/build_real_words.py` if you want lists tuned to your domain.
 
+## 🌱 Start here if you're new to AI agents
+
+This pipeline is one piece of my personal AI workflow. If you want to learn how
+to use AI agents like Claude Code from zero (no programming background needed),
+I wrote a beginner series (in Traditional Chinese):
+
+1. [從零開始：安裝、看懂 GitHub、跑起你的第一個工具](https://drpwchen.com/posts/getting-started/)
+2. [怎麼跟 AI agent 講話：心法、元技能與規則檔](https://drpwchen.com/posts/talking-to-agents/)
+3. [自動化流程不是設計出來的，是長出來的](https://drpwchen.com/posts/growing-your-workflow/)
+
+The story behind this particular tool →
+[演講影片變成筆記：本機 GPU 轉錄 + 投影片對位](https://drpwchen.com/posts/lecture-to-notes/)
+
+Full map of my tools and posts → [drpwchen.com/map](https://drpwchen.com/map/)
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

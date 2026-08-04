@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Documentation
+
+- README (both languages) now links back to the beginner series and to the post
+  explaining this pipeline. No runtime change.
+
 ## [0.5.1] — 2026-08-04
 
 ### Fixed
