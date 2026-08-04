@@ -10,6 +10,28 @@ All notable changes to this project are documented here. This project follows
 - README (both languages) now links back to the beginner series and to the post
   explaining this pipeline. No runtime change.
 
+## [0.5.2] — 2026-08-04
+
+### Fixed
+
+- **Media existence is now verified, not assumed.** `export_web.py` wrote
+  `exists: true` into every `media_parts` entry without ever checking the
+  disk. Web-native files (mp3 / already-web-playable mp4) are served in
+  place — no copy is made into the support folder — so if their source files
+  are later moved or deleted, the delivered page keeps referencing them and
+  the player just fails silently, with no warning at export time either.
+  (Real case: a course's 錄音 recorder-backup mp3s were cleaned up along
+  with the raw camera files after delivery; the page carried 11 dead audio
+  references for a month with zero alarm.) The exporter now resolves every
+  part against the disk, marks missing ones `exists: false`, and prints a
+  loud per-file warning; the viewer shows a "來源檔已遺失，無法播放" notice
+  instead of a dead player, and sequential autoplay skips missing parts.
+- **Previous delivered artifacts are kept as `.bak` before overwrite.** A
+  re-export now saves the existing `影片筆記整合.html`, `_timeline.json`
+  and `_media_map.json` as one-generation `.bak` copies first — a buggy
+  re-export once clobbered a course's only good timeline/media map in
+  place, leaving nothing to diagnose or roll back to.
+
 ## [0.5.1] — 2026-08-04
 
 ### Fixed

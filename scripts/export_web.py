@@ -74,7 +74,7 @@ from _common import atomic_write_json, load_config, require_binaries
 # future viewer reads any past manifest, and any deployed HTML keeps working forever.
 # Upgrade path = regenerate from the (standardized) COURSE dir, NOT in-place migration.
 SCHEMA_VERSION = 3          # 2: media_src + version stamps · 3: slide_blocks (slide-layer search)
-VIEWER_VERSION = "layout2/2026.08.03"
+VIEWER_VERSION = "layout2/2026.08.04"
 
 CODEC_LABEL = {"hevc": "H.265", "h264": "H.264"}
 CRF_DEFAULT = {"hevc": 24, "h264": 18}   # measured ≈-equivalents, 2026-08-03
@@ -1364,7 +1364,28 @@ def main(argv=None):
 
     # 4. timeline + the single webpage (at the course root; media_root "." = course root)
     sw, tl = build_timeline(resolver_inplace)
+    # media existence is VERIFIED, not assumed (2026-08-04): `exists` used to be
+    # hard-coded True even when the resolved target was gone — US-nerve-track shipped
+    # 11 dead in-place 錄音/*.mp3 references for a month with zero alarm after the
+    # source folder was cleaned. Missing parts stay in the page (notes/timestamps are
+    # still useful) but carry exists:false so the viewer shows a 來源已遺失 notice
+    # instead of a silently broken player.
+    html_dir = os.path.dirname(os.path.abspath(HTML_OUT))
+    missing_media = []
+    for _part in tl["media_parts"]:
+        _target = os.path.normpath(os.path.join(html_dir, _part["relative_path"].replace("\\", "/")))
+        _part["exists"] = os.path.exists(_target)
+        if not _part["exists"]:
+            missing_media.append(_part["file"])
     page = make_page(sw, tl, ".")
+    # keep the previous delivered artifacts as .bak before overwriting (2026-08-04):
+    # a buggy re-export once clobbered a course's only good _timeline/_media_map in
+    # place, leaving nothing to diagnose or roll back to. One generation is enough.
+    for _prev in (HTML_OUT,
+                  os.path.join(SUPPORT, "_timeline.json"),
+                  os.path.join(SUPPORT, "_media_map.json")):
+        if os.path.exists(_prev):
+            shutil.copy2(_prev, _prev + ".bak")
     with open(HTML_OUT, "w", encoding="utf-8") as fh:
         fh.write(page)
 
@@ -1388,6 +1409,14 @@ def main(argv=None):
               file=sys.stderr)
         for p in dict.fromkeys(PROBE_PROBLEMS):
             print(f"     {p}", file=sys.stderr)
+
+    if missing_media:
+        print(f"  ⚠️ {len(missing_media)} media part(s) UNRESOLVED on disk — the page "
+              "marks them 來源已遺失 (exists:false). If this is a fresh export, the "
+              "source files are gone; recover them before deleting anything else:",
+              file=sys.stderr)
+        for fn in missing_media:
+            print(f"     {fn}", file=sys.stderr)
 
     rc = check_embeds()
     if rc:

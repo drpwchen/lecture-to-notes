@@ -16,6 +16,9 @@
 /* ---- 1. data + state ---- */
 const mediaRoot = TIMELINE.media_root_relative_to_html || '..';
 const mediaSrc = TIMELINE.media_src || {};
+// parts the exporter could not find on disk (exists:false) — notes and timestamps
+// stay useful, but pointing the player at them would just fail silently
+const missingMedia = new Set((TIMELINE.media_parts||[]).filter(p=>p.exists===false).map(p=>p.file));
 const blocks = [...TIMELINE.note_blocks].sort((a,b)=>a.start_sec-b.start_sec || String(a.block_id).localeCompare(String(b.block_id)));
 const segments = TIMELINE.segments || [];
 let activeSegmentId = segments[0]?.segment_id || '';
@@ -38,6 +41,11 @@ function segFiles(seg){return (seg && (seg.media_files || [seg.media_file]).filt
 /* ---- 3. video control + sequential autoplay ---- */
 function setVideo(file, t, autoplay=true){
   const v=q('#player'), now=q('#now');
+  if(missingMedia.has(file)){
+    now.textContent='⚠ '+file+' @ '+fmt(t)+'（來源檔已遺失，無法播放）';
+    v.removeAttribute('src'); delete v.dataset.file; v.load();
+    return;
+  }
   now.textContent='▶ '+file+' @ '+fmt(t);
   if(v.dataset.file!==file){
     v.src=mediaUrl(file); v.dataset.file=file;
@@ -49,7 +57,10 @@ function setVideo(file, t, autoplay=true){
 function playNextClip(){
   const v=q('#player'); const seg=segmentById(activeSegmentId); const files=segFiles(seg);
   const i=files.indexOf(v.dataset.file);
-  if(i>=0 && i+1<files.length){ setVideo(files[i+1], 0, true); }
+  if(i>=0 && i+1<files.length){
+    const nxt=files.slice(i+1).find(f=>!missingMedia.has(f));
+    if(nxt) setVideo(nxt, 0, true);
+  }
 }
 
 /* ---- 4. view state ---- */
