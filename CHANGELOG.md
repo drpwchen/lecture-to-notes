@@ -3,6 +3,26 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] — 2026-08-05
+
+### Documentation
+
+The same-talk trap section shipped in 0.6.5 said what to look for but not what
+should trip the alarm first — and its author then fell into the trap the same
+day. Two additions to `multi-camera.md`:
+
+- **Check the spread before the vote count.** Offsets recovered from two devices
+  at one event agree within seconds; tens of seconds means different sittings of
+  the same recurring course. The failure mode is comparing that spread against
+  the offset being proposed — 45 seconds against a 4.5-year clock error reads as
+  tight, and a wrong conclusion gets accepted. Compare it against seconds, not
+  against the number you are trying to prove.
+- **Settle "are these the same files?" with categorical evidence** — durations
+  equal to the second, byte sizes equal — not similarity scores. The score
+  ranges for "one file, two ASR runs" and "one script, two years" overlap
+  completely (measured: 0.71–0.86 for both). Also noted: `difflib.quick_ratio()`
+  compares character multisets and is an upper bound, not a comparison.
+
 ## [0.6.5] — 2026-08-05
 
 ### Documentation
