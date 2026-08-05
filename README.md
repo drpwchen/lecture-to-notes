@@ -306,3 +306,8 @@ Full map of my tools and posts → [drpwchen.com/map](https://drpwchen.com/map/)
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Support 支持
+
+覺得這個工具有幫助嗎？歡迎[請我喝飲料](https://drpwchen.com/support/) 🧋
+If this tool helped you, you can [buy me a drink](https://drpwchen.com/en/support/).
