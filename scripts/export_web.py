@@ -62,7 +62,7 @@ Usage:
 
 Requires pandoc + ffmpeg/ffprobe on PATH (checked up front, before any work).
 """
-import json, os, re, sys, subprocess, shutil, html, tempfile, argparse
+import json, os, re, sys, subprocess, shutil, html, hashlib, tempfile, argparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASSET_DIR = os.path.join(HERE, "layout2")
@@ -948,6 +948,19 @@ def make_page(sections_wrapped, timeline, media_root):
 # Image source resolution
 # ---------------------------------------------------------------------------
 _IMG_INDEX = None   # basename -> [full paths], lazily walked over the whole course work dir
+_IMG_AMBIGUOUS = []  # basenames that resolved to several DIFFERENT images (fatal, reported by check_embeds)
+
+
+def _file_digest(path):
+    """Content hash — two candidates with the same bytes are not a real ambiguity."""
+    h = hashlib.md5()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError:
+        return path  # unreadable: treat as its own distinct content
+    return h.hexdigest()
 
 
 def _seg_context_tokens(seg):
@@ -962,22 +975,29 @@ def _seg_context_tokens(seg):
 
 
 def resolve_image_src(fr, seg=None):
-    """Locate an embedded image on disk. Fast path: figures/ (where build_L1 copies
-    canonical cNN_frame_XXXX.jpg). Fallback (WP1-1): a one-time recursive walk of the
-    course work dir so non-frame embeds (PDF pages under _decks/, page images under
-    _seg/clips/*/frames, etc.) resolve too. The index is built only if the fast path
-    misses at least once, so all-frame courses (e.g. 2016) keep byte-identical behavior
-    and pay zero extra cost.
+    """Locate an embedded image on disk. Fast path: the FIGURE_ROOTS in order —
+    `figures/` then `_L1/figures/` (build_L1 writes the latter; the former was the
+    only root checked until 2026-08-05, so on every course built by the batch
+    pipeline the fast path could never hit and every embed fell through to the walk).
+    Fallback (WP1-1): a one-time recursive walk of the course work dir so non-frame
+    embeds (PDF pages under _decks/, page images under _seg/clips/*/frames, etc.)
+    resolve too.
 
-    Embeds are basename-only, and generic names (page_001.png) recur under several
-    segment directories. When several files share the basename, prefer the one whose
-    path mentions the embedding segment; if that still doesn't single one out, say so
-    and take the first — a silent first-match shipped the wrong figure.
+    ==Basename collisions across figure generations are FATAL, not a coin flip.==
+    Embeds are basename-only. A course whose manifest was reordered has two
+    generations of `cNN_frame_XXXX.jpg` on disk (old numbering in `_L1/_stale_figures`,
+    new in `_L1/figures`) and the SAME basename then means two DIFFERENT pictures.
+    The old behaviour picked one — silently when segment context happened to scope it,
+    with a warning otherwise — and shipped 124 wrong-but-plausible figures on
+    US-nerve-track (2026-08-05) under a green `all embeds mapped + copied ✓`.
+    Now: identical bytes → fine; different bytes → say so and refuse to guess
+    (returns None, so check_embeds fails the export loudly).
     """
     global _IMG_INDEX
-    p = os.path.join(src_fig, fr)
-    if os.path.exists(p):
-        return p
+    for _root in FIGURE_ROOTS:
+        p = os.path.join(_root, fr)
+        if os.path.exists(p):
+            return p
     if _IMG_INDEX is None:
         idx = {}
         exts = (".jpg", ".jpeg", ".png", ".webp")
@@ -991,15 +1011,32 @@ def resolve_image_src(fr, seg=None):
         return None
     if len(cands) == 1:
         return cands[0]
+
+    # Same bytes under several paths is not an ambiguity — collapse before judging.
+    by_digest = {}
+    for c in cands:
+        by_digest.setdefault(_file_digest(c), []).append(c)
+    if len(by_digest) == 1:
+        return cands[0]
+
     toks = _seg_context_tokens(seg) if seg is not None else set()
     scoped = [c for c in cands if any(t in c.lower() for t in toks)] if toks else []
     if len(scoped) == 1:
+        # Legitimate case: generic names (page_001.png) repeated per segment dir.
+        # Still noisy on purpose — this used to resolve silently.
+        print(f"WARNING: {fr} matches {len(cands)} DIFFERENT images; using the one "
+              f"scoped to seg{seg:02d}: {scoped[0]}\n"
+              + "".join(f"           candidate: {c}\n" for c in cands), file=sys.stderr)
         return scoped[0]
-    pool = scoped or cands
-    print(f"WARNING: {fr} matches {len(cands)} files in the course dir and the "
-          f"segment context does not disambiguate; using {pool[0]}\n"
-          + "".join(f"           candidate: {c}\n" for c in pool), file=sys.stderr)
-    return pool[0]
+
+    _IMG_AMBIGUOUS.append(fr)
+    print(f"ERROR: {fr} matches {len(by_digest)} DIFFERENT images in the course dir "
+          f"and the segment context does not disambiguate — refusing to guess.\n"
+          + "".join(f"           candidate: {c}\n" for c in cands)
+          + "         Fix the source tree (e.g. stage the intended generation in "
+            "<course>/figures/) and re-run; do NOT let the exporter pick.\n",
+          file=sys.stderr)
+    return None
 
 
 def rewrite_links(md):
@@ -1168,6 +1205,12 @@ def check_embeds():
             print(f"   [UNMAPPED  regex miss ] {label}: ![[{name}]]")
         for label, name in unresolved:
             print(f"   [UNRESOLVED src missing] {label}: ![[{name}]] -> {IMG_MAP[name]}")
+        if _IMG_AMBIGUOUS:
+            print(f"\n   ⚠️ {len(set(_IMG_AMBIGUOUS))} basename(s) were AMBIGUOUS, not missing: "
+                  f"each matches several DIFFERENT images on disk (see the ERROR lines above). "
+                  f"That is what a reordered manifest leaves behind — two generations of "
+                  f"cNN_frame_XXXX.jpg sharing names. Stage the intended generation in "
+                  f"<course>/figures/ and re-run.")
         return 1
     print(f"  embed-check: all {n_embeds} image embeds mapped + copied ✓")
     return 0
@@ -1252,7 +1295,7 @@ def main(argv=None):
     global A, AUTHOR, COURSE, COURSE_ROOT, COURSE_NAME, COURSE_DATE, MANIFEST, MEDIA_REL
     global HUB, hub_fm, segs, by, ORDER, RANK
     global SUPPORT, HTML_OUT, MEDIA_IMG, MEDIA_VID, MD_OUT, PDF_OUT
-    global IMG_URL_PREFIX, VID_URL_PREFIX, src_fig
+    global IMG_URL_PREFIX, VID_URL_PREFIX, FIGURE_ROOTS
     global IMG_MAP, VID_MAP, NOTE_MAP, IMG_OWNER, NOTE_BY_KINDSEG
     global CSS, JS_LOGIC, PROBE_PROBLEMS
 
@@ -1323,7 +1366,10 @@ def main(argv=None):
     sup_base = os.path.basename(SUPPORT.rstrip("/\\"))
     IMG_URL_PREFIX = sup_base + "/媒體/圖片/"   # relative to the HTML at the course root
     VID_URL_PREFIX = sup_base + "/媒體/影片/"
-    src_fig = os.path.join(COURSE, "figures")
+    # Ordered figure roots. `figures/` is the staging root a repair run can
+    # populate to pin one generation; `_L1/figures/` is where build_L1 writes.
+    FIGURE_ROOTS = [os.path.join(COURSE, "figures"),
+                    os.path.join(COURSE, "_L1", "figures")]
 
     segs, changed = normalize_segments(segs, COURSE, MANIFEST, hub_fm)
     if changed:

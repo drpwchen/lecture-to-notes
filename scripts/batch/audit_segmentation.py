@@ -5,13 +5,25 @@ r"""Audit an existing segmentation against the course's real timeline.
                                  [--json OUT] [--gap-min 8] [--chain-sec 5]
 
 ==The question this answers: after the clip order was fixed, is the existing
-proposal still usable, or must it be regenerated?== Re-proposing every course
+segmentation still usable, or must it be regenerated?== Re-proposing every course
 is expensive; trusting a proposal that was written against a wrong order is
 worse. This is the mechanical part of that judgement — it reports evidence and
-a verdict, and never rewrites the proposal itself.
+a verdict, and never rewrites anything itself.
+
+==Which artifact is judged depends on how far the course got.== Before
+segmentation there is only `proposal.md`, a planning note. Once `segments.json`
+exists that IS the segmentation — it shipped — and a stale proposal is history,
+not a defect. Auditing a delivered course by its proposal alone returns
+REGENERATE for every reordered course and invites a needless rewrite of its
+whole L2/L3 set.
 
 Checks
 ------
+0. **Delivered segmentation** (when `segments.json` exists) — does every segment
+   still map to a CONTIGUOUS block of the corrected clip order (grouping intact),
+   does every clip belong to some segment, and does `display_order` follow real
+   time? A contiguous-but-misordered course needs a `display_order` fix and a
+   re-export, NOT new notes.
 1. **Staleness** — was the proposal written before the timeline / before the
    manifest was reordered? A proposal that predates the reorder was reasoned
    against an order that never happened.
@@ -74,6 +86,80 @@ def main():
         if level == "REGENERATE" or (level == "REVIEW" and verdict == "OK"):
             verdict = level
 
+    # --- 0. the DELIVERED segmentation, when there is one ----------------
+    # ==A course that already has segments.json is past the proposal stage.==
+    # proposal.md is a planning artifact; segments.json is what shipped. Judging a
+    # delivered course only by its stale proposal returns REGENERATE for every
+    # reordered course even when the delivered grouping is provably intact —
+    # US-nerve-track (2026-08-05) got that verdict while all 20 of its segments
+    # mapped to contiguous blocks of the corrected order, and a full regeneration
+    # of 41 L2/L3 notes was nearly spent on a display_order fix. So: check the
+    # thing that ships, and let it downgrade the proposal findings.
+    seg_path = os.path.join(course, "_seg", "segments.json")
+    segments = None
+    seg_contiguous = seg_covered = seg_ordered = None
+    if os.path.isfile(seg_path) and os.path.isfile(man_path):
+        try:
+            segments = load(seg_path)
+        except (ValueError, OSError):
+            segments = None
+    if segments:
+        clips = load(man_path).get("clips", [])
+        pos = {os.path.basename(s["file"]): i for i, s in enumerate(timed)}
+        # real-time rank of each manifest index (manifest is the reordered truth)
+        rank = {}
+        for i, c in enumerate(clips):
+            rank[i] = pos.get(os.path.basename(c.get("src", "")))
+        content = [s for s in segments if s.get("display_order") != 0]
+        noncontig, covered = [], set()
+        for s in content:
+            idx = sorted(s.get("clips") or [])
+            covered |= set(idx)
+            if not idx:
+                continue
+            if idx != list(range(idx[0], idx[0] + len(idx))):
+                noncontig.append((s.get("seg"), idx[0], idx[-1], len(idx)))
+        seg_contiguous = not noncontig
+        uncovered = [i for i in range(len(clips)) if i not in covered]
+        seg_covered = not uncovered
+        # playback order should follow the first clip of each segment
+        got = [s.get("seg") for s in sorted(content, key=lambda x: x.get("display_order", 0))]
+        want = [s.get("seg") for s in sorted(content, key=lambda x: min(x.get("clips") or [10**9]))]
+        seg_ordered = got == want
+
+        if noncontig:
+            flag("REGENERATE", "segments-noncontiguous",
+                 "%d delivered segment(s) do NOT map to a contiguous block of the "
+                 "current clip order — either the clip indices are stale (written "
+                 "against the pre-reorder manifest) or the grouping is genuinely "
+                 "wrong: %s" % (len(noncontig), ", ".join(
+                     "seg%s(%d-%d, %d clips)" % n for n in noncontig[:5])),
+                 segments=noncontig)
+        else:
+            findings.append(dict(
+                level="INFO", code="segments-contiguous",
+                message="all %d delivered segment(s) map to contiguous blocks of the "
+                        "corrected order — the grouping survived the reorder, only "
+                        "numbering/ordering can be off" % len(content)))
+        if uncovered:
+            names = [clips[i].get("src") for i in uncovered]
+            flag("REVIEW", "segments-uncovered",
+                 "%d clip(s) belong to no segment — check whether they are throwaway "
+                 "fragments or real content that was dropped: %s"
+                 % (len(uncovered), ", ".join(names[:6])), files=names)
+        if seg_ordered is False:
+            flag("REVIEW", "segments-display-order",
+                 "delivered segments play in a different order than they were "
+                 "recorded — fix `display_order` in segments.json and re-export; "
+                 "==this does NOT need the notes regenerated== (seg numbers, and "
+                 "therefore L2/L3 filenames, can stay as they are)")
+
+    # ==When the delivered segmentation checks out, proposal staleness is history,
+    # not a defect.== Downgrade those findings so the verdict reflects the artifact
+    # that actually ships.
+    delivered_ok = bool(segments) and seg_contiguous
+    stale_level = "INFO" if delivered_ok else "REGENERATE"
+
     # --- 1. staleness --------------------------------------------------
     have_proposal = os.path.isfile(pr_path)
     text = ""
@@ -85,7 +171,7 @@ def main():
             text = fh.read()
         pr_m, tl_m = os.path.getmtime(pr_path), os.path.getmtime(tl_path)
         if pr_m < tl_m:
-            flag("REGENERATE", "predates-timeline",
+            flag(stale_level, "predates-timeline",
                  "proposal.md is older than real_timeline.json — it was written "
                  "before real capture times were known (proposal %s, timeline %s)"
                  % (datetime.datetime.fromtimestamp(pr_m).strftime("%Y-%m-%d %H:%M"),
@@ -94,13 +180,13 @@ def main():
                 if f.startswith("manifest.json.bak-timeline-")] \
             if os.path.isdir(os.path.dirname(man_path) or ".") else []
         if baks and os.path.isfile(man_path) and pr_m < os.path.getmtime(man_path):
-            flag("REGENERATE", "predates-reorder",
+            flag(stale_level, "predates-reorder",
                  "the manifest was reordered by real time AFTER this proposal "
                  "was written (%s) — its clip ordering reasoning is void"
                  % ", ".join(sorted(baks)[:3]))
 
     # --- 2. coverage ---------------------------------------------------
-    if have_proposal:
+    if have_proposal and not delivered_ok:
         # Match on the stem as well as the full name: proposals routinely write
         # `<speaker>-1-00002` without the extension, and demanding the extension
         # reported every correctly-cited source as missing.
@@ -150,6 +236,25 @@ def main():
             ov = (hi - lo).total_seconds()
             if ov > 60:
                 par.append((x["file"], y["file"], round(ov / 60, 1)))
+    # A pair that the delivered segmentation ALREADY puts in one segment is the
+    # desired state, not a finding — reporting it made the audit demand a fix that
+    # was in place (US-nerve-track's seg01 held its camera clip and its recorder
+    # mp3 from the start, and was still listed as "must be ONE segment").
+    if par and segments:
+        src_of = {i: os.path.basename(c.get("src", ""))
+                  for i, c in enumerate(load(man_path).get("clips", []))}
+        same = set()
+        for s in segments:
+            files = {src_of.get(i) for i in (s.get("clips") or [])}
+            for p in par:
+                if os.path.basename(p[0]) in files and os.path.basename(p[1]) in files:
+                    same.add(p)
+        if same:
+            findings.append(dict(
+                level="INFO", code="parallel-tracks-paired",
+                message="%d overlapping pair(s) are already together in one segment "
+                        "(two sources, one session) — as intended" % len(same)))
+        par = [p for p in par if p not in same]
     if par:
         flag("REVIEW", "parallel-tracks",
              "%d source pair(s) overlap in wall-clock time — the same session "
@@ -252,10 +357,15 @@ def main():
     for f in findings:
         print("   [%-10s] %s" % (f["level"], f["message"]))
     print("\nVERDICT: %s" % verdict)
-    print({"OK": "  proposal is consistent with the real timeline",
+    print({"OK": ("  the delivered segmentation is consistent with the real timeline"
+                  if delivered_ok else
+                  "  proposal is consistent with the real timeline"),
            "REVIEW": "  usable, but the flagged points need a human decision",
            "REGENERATE": "  re-run the Step-1 segmentation agent against the "
                          "corrected order"}[verdict])
+    if delivered_ok and verdict != "OK":
+        print("  NOTE: the delivered grouping itself checked out — see the "
+              "segments-* findings for what actually needs doing")
     if a.json:
         atomic_write_json(a.json, {"course": tl.get("course"), "verdict": verdict,
                                    "findings": findings}, indent=1)

@@ -3,6 +3,41 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] — 2026-08-05
+
+### Fixed
+
+Two silent failures found while repairing a reordered course. Both share a shape
+this project keeps meeting: **a check that reports success about something it
+never actually examined.**
+
+- **`export_web.py` shipped 124 wrong-but-plausible figures under a green
+  check.** The fast path for embedded images only ever looked in `<course>/figures/`,
+  while `build_L1.py` writes to `<course>/_L1/figures/` — so on every course built
+  by the batch pipeline it could not hit, and each embed fell through to a
+  recursive walk that indexes the whole work dir **by basename**. After a manifest
+  reorder there are two generations of `cNN_frame_XXXX.jpg` on disk (old numbering
+  left in `_L1/_stale_figures/`, new in `_L1/figures/`), so one basename means two
+  different pictures. The resolver picked one — silently when segment context
+  happened to scope it — and `embed-check: all N image embeds mapped + copied ✓`
+  reported success. Captions were right; 124 of 896 images were not.
+  Now: figure roots are an ordered list (`figures/`, then `_L1/figures/`);
+  candidates are collapsed by content hash, so identical bytes under several paths
+  are not an ambiguity; a genuinely ambiguous basename is an **error that fails the
+  export**, and one resolved by segment context prints a warning instead of
+  resolving silently. Stage the intended generation in `<course>/figures/` to pin it.
+- **`audit_segmentation.py` judged delivered courses by a superseded artifact.**
+  It read only `proposal.md` — a planning note — and never `segments.json`, which
+  is what actually ships. Every reordered course therefore returned `REGENERATE`,
+  including one whose 20 segments each still mapped to a contiguous block of the
+  corrected order and needed nothing but a `display_order` fix; acting on that
+  verdict would have rewritten 41 L2/L3 notes for no reason. It now checks the
+  delivered segmentation first — contiguity (is the grouping intact?), coverage
+  (does any clip belong to no segment?), and whether playback order follows real
+  time — and downgrades proposal staleness to INFO when that segmentation holds up.
+  Overlapping source pairs already sitting in one segment are reported as intended,
+  not as a defect to fix.
+
 ## [0.6.6] — 2026-08-05
 
 ### Documentation
