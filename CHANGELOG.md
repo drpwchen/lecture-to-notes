@@ -3,6 +3,30 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] — 2026-08-05
+
+### Documentation
+
+The reasoning behind 0.6.1–0.6.4 now lives in the reference docs, not just in
+the commits that fixed the code.
+
+- `multi-camera.md` gains three sections on placing material whose clock lies:
+  **serial-number bracketing** (a clip with no capture time at all can still be
+  placed, because stills and video share one counter on the same card — and a
+  below-threshold cross-correlation becomes usable once an independent line of
+  evidence agrees with it); **the same-talk trap** (cross-correlation votes on
+  shared N-grams, so a lecturer repeating a course scores as high as a second
+  camera at one event — what separates them is speech that happens only once);
+  and **phantom years** (a folder named from material timestamps inherits the
+  camera's wrong clock, inventing a plausible year that every derived artifact
+  then carries).
+- `pipeline.md` states the label rule plainly: the viewer parses `Vn` and bare
+  filenames only, so an `A1` invented for an audio source yields a note that
+  reads perfectly and whose every timecode is dead.
+- `decisions.md` gains three entries on the shape of silent failure — an empty
+  scan reads like a clean one, an unmatched pattern reads like prose, and an
+  empty comparison must never fall through to the success path.
+
 ## [0.6.4] — 2026-08-05
 
 ### Fixed

@@ -481,3 +481,24 @@ The recurring meta-lesson across the entries above, stated once:
 7. ==Machine-green is not correct.== In multi-source alignment, every mechanical
    check passed while the material was 44 minutes out of place; a human looking at
    one clip's actual content was what caught it.
+8. ==A clean report and an empty scan look identical.== A cleanup script printed
+   "0 stale figures" for a course that had 5,762 of them: it gated on the previous
+   tool generation's backup filename and ignored its course argument, so it had
+   scanned nothing. Before believing any audit's all-clear, check that it matched
+   something — hits > 0, targets scanned > 0. Tools that can select nothing should
+   exit non-zero when a named target matches nothing, rather than reporting a
+   reassuring total.
+9. ==A pattern that fails to match is indistinguishable from prose.== The viewer's
+   timecode regex listed only video extensions, so every citation into an audio
+   file rendered as dead plain text — no error, no warning, and the export summary
+   counts blocks rather than resolutions. On one two-day course 312 of 536
+   timecodes were dead this way. Anything that silently degrades to "render as-is"
+   needs a positive check downstream: count how many citations became links and
+   compare against how many were written.
+10. ==Four silent-failure bugs surfaced in a single session, all the same shape:==
+   reporting "checked, nothing wrong" about something never checked. Three came
+   from one root cause — a manifest `src` carrying a subdirectory prefix compared
+   against a bare basename, so the lookup found nothing and the "nothing" was read
+   as "nothing wrong". When a comparison can come up empty, the empty case needs
+   its own branch; falling through to the success path is how a checker becomes
+   decorative.

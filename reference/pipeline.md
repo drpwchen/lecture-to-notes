@@ -550,6 +550,20 @@ a page of embeds pointing at files that were never copied, with a green audit.
 [--template ...] [--vault ROOT] [--grounding DIR]` — the vendored auditor. See
 `note-spec.md` for what each mode enforces.
 
+### Source labels are always `Vn` — even for audio {#vn-label-rule}
+
+The viewer resolves `` `(Vn MM:SS)` `` and bare filenames; ==nothing else==. An
+agent writing up an audio-only session naturally reaches for `A1`, declares it in
+the note's own `## 影片代號` table, and produces a note that reads perfectly and
+whose every timecode is dead — the export reports no error, because an unmatched
+pattern is just prose. Measured on one course: four audio segments, 421 labels,
+all dead until they were renamed to `V1`.
+
+So: ==`V` for every source, video or audio==, numbered by the segment's file order.
+Write real filenames instead when the note spans sources whose numbering differs
+from that order — and always in the overview note, whose readers have no per-segment
+label table in front of them.
+
 ## Web viewer export — single talk {#web-export}
 
 `build_single_talk_web.py <lecture_dir> --plan plan.json [--video FILE]
@@ -574,7 +588,8 @@ Writes `_raw/manifest.json` (one clip → `V1`), `_intermediate/seg/segments.jso
 (==a LIST, not a dict== — `normalize_segments` crashes on a dict), one
 `L2_segNN_<slug>.md` per segment (transcript entries sliced per segment, bullets
 grouped in 30-second buckets, `` `(V1 MM:SS)` `` absolute timecodes — ==the only
-format the viewer parses==), a `_HUB_<slug>.md` skeleton, and empty `L3/` +
+format the viewer parses==; see [the label rule](#vn-label-rule) before inventing
+`A1` for an audio source), a `_HUB_<slug>.md` skeleton, and empty `L3/` +
 `figures/`. Existing files are kept unless `--force`, so re-running after a plan
 fix is safe. Guards: overlapping segments and duplicate slugs are refused;
 a plan that ends >60 s before the transcript does warns about the dropped tail;
