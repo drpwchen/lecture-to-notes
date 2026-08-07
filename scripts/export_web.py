@@ -394,6 +394,40 @@ def build_note_by_kindseg(note_map):
     return out
 
 
+# ── timecode citation grammar (see ts_block) ─────────────────────────────────
+# Media extensions belong in one list: an audio-only session (recorder file plus
+# photographed slides) cites `(錄音-240526_1119.mp3 03:23)`, and while mp3 was missing
+# from this list those citations stayed dead plain text — with no error anywhere, since
+# a non-match is indistinguishable from prose.
+_MEDIA_EXT = (r'MTS|mts|mp4|MP4|mov|MOV|m2ts|M2TS|avi|AVI'
+              r'|mp3|MP3|m4a|M4A|wav|WAV|aac|AAC')
+# A parenthesised run containing a clock — a citation *candidate*; ts_block decides.
+TS_BLOCK = re.compile(r'`?\(([^()`]*\d{1,2}:\d{2}[^()`]*)\)`?')
+# One `[label] [approx] time` item. The filename may contain spaces and hyphens
+# ("15 knee lat aspect 1_x264.mp4", "<speaker>-3-QA-00004.MTS") but never a separator —
+# and ==never a colon==: without that exclusion the filename pattern happily swallows
+# the preceding separator AND the preceding clock ("–06:31；00001.MTS" became one
+# "filename"), producing pills pointing at videos that do not exist. Every separator
+# TS_SEP accepts must therefore be excluded here, full-width punctuation included.
+# The label may be any letter+digit code the note declares (V1 for video, A1 for an
+# audio-only source) — an unknown one simply finds no file and the citation is left
+# alone, which is what keeps medical prose like `(T2 05:30)` from becoming a link.
+# Minutes run to three digits (a 100-minute clip is cited as `(V1 100:43)`); seconds
+# must be a real 00–59 so that prose such as `(收縮壓 120:80)` cannot match.
+TS_TOKEN = re.compile(r'(?:([A-Za-z]\d+)|([^,;/、；，→~–—:\n()]+?\.(?:' + _MEDIA_EXT + r')))?'
+                      r'\s*(?:(⚠️?\s*approx|approx)\s*)?'
+                      r'(\d{1,3}):([0-5]\d)(?::([0-5]\d))?')
+# What may legally sit between two items (anything else means it is prose, not a citation)
+TS_SEP = re.compile(r'^[\s,;/、；，→和及~\-–—]*$')
+TS_RANGE = re.compile(r'[~\-–—]')      # this separator means "range", not "next item"
+# A leading note before the first time — `(練習段 V1 00:09)`, `(seg06 V1 01:10)`,
+# `(c00 14:17)`. It is kept verbatim in front of the pills; it must not itself contain
+# a clock, so a trailing-prose case like `(見 V1 07:30 的說明)` still stays plain text.
+TS_NOTE = re.compile(r'^[^:()]*$')
+# `(V2 28:30-42)` — the range end abbreviated to seconds only, sharing the minute.
+TS_TAIL_SECS = re.compile(r'^[~\-–—]([0-5]?\d)$')
+
+
 def vmap_for(seg): return {f"V{i+1}": fn for i, fn in enumerate(by[seg]['files'])}
 def secs(m, s): return int(m) * 60 + int(s)
 def fmt_clock(t): return f"{int(t)//60:02d}:{int(t)%60:02d}"
@@ -409,6 +443,27 @@ def resolve_link(t):
     return f"s{int(m.group(2))}-l{m.group(1)}" if m else None
 
 
+DECLARED_ROW = re.compile(r'^\|\s*([A-Za-z]\d+)\s*\|\s*([^|]+?)\s*\|', re.M)
+# The "原始檔案" cell is prose as often as not: "00001.MTS（04:39 起）",
+# "`52 hydrodissection-De Q tunnel 1.mp4`", "<topic>-<speaker>-00009.MTS（檔名誤植…）".
+# Take the filename and drop the commentary — feeding the whole cell in as data-file
+# mints links to files that do not exist.
+DECLARED_FILE = re.compile(r'^\s*`?\s*(.+?\.(?:' + _MEDIA_EXT + r'))\s*`?(?:\s|$|[（(])')
+
+
+def declared_labels(md):
+    """{label: filename} from the note's own `## 影片代號` table (V1/A1/…)."""
+    m = re.search(r'##\s*影片代號.*?\n(.*?)(?=\n#|\Z)', md, re.S)
+    if not m:
+        return {}
+    out = {}
+    for lab, cell in DECLARED_ROW.findall(m.group(1)):
+        fm = DECLARED_FILE.match(cell)
+        if fm:
+            out[lab] = fm.group(1)
+    return out
+
+
 def preprocess(md, seg):
     """Markdown -> HTML-ready markdown (frontmatter/callout/figure/highlight/wikilink/timestamp)."""
     md = re.sub(r'^---\n.*?\n---\n', '', md, count=1, flags=re.S)
@@ -417,6 +472,17 @@ def preprocess(md, seg):
     # strip the trailing "## 課程 Hub\n[[_HUB…]]" backlink section — not useful inside the HTML viewer
     md = re.sub(r'(?:\n-{3,}\s*)?\n#{1,3}\s*課程 Hub\b.*$', '\n', md, flags=re.S)
     vm = vmap_for(seg) if seg else {}
+    # ==A note's own `## 影片代號` table outranks the positional V-map.== Positional
+    # numbering assumes V1 is the segment's first file, but notes carry other label
+    # schemes — an audio-only source is cited as `(A1 06:59)`, and some notes continue
+    # the numbering across segments. Reading the table the note itself declares covers
+    # both, and matches what add_overview_segment.py already treats as authoritative.
+    vm.update(declared_labels(md))
+    # A citation with no label at all can only be resolved when the segment leaves no
+    # choice — exactly one media file. That covers a real batch case (a 137-citation
+    # segment with a single clip) without ever guessing between candidates.
+    seg_files = (by[seg]['files'] if seg and by.get(seg) else []) or []
+    only_file = seg_files[0] if len(seg_files) == 1 else None
     # callout header -> bold line; append a blank quote line so a following "> - bullet" list is
     # NOT lazily absorbed into the title paragraph (pandoc would otherwise render bullets as inline text)
     md = re.sub(r'^> \[!(\w+)\]\s*(.*)$',
@@ -429,35 +495,118 @@ def preprocess(md, seg):
                 lambda m: IMG_MAP.get(m.group(0) if m.group(0).endswith('.jpg') else m.group(0) + '.jpg', m.group(0)), md)
     md = re.sub(r'==([^=]+)==', r'<mark>\1</mark>', md)
 
-    def ts(m):
-        # group(1)=Vn (via V-map) OR group(2)=raw filename (old courses, e.g. 00004.MTS)
-        # group(3)=optional `⚠️approx` marker (approximate time — still jumpable, but flagged)
-        v, fn_raw, approx, mm, ss = (m.group(1), m.group(2), m.group(3),
-                                     m.group(4), m.group(5))
-        if v:
-            fn = vm.get(v); label = v
-        else:
-            fn = fn_raw; label = os.path.splitext(fn_raw)[0]
-        if not fn:
-            return m.group(0)
+    def one_ts(fn, label, approx, disp, t):
+        """Render one pill. `disp` is what the reader sees after the label
+        (a single clock, or a range like `04:22–04:31`); `t` is where it jumps."""
         # Approx timestamps used to NOT match the old regex (the `⚠️approx` token sat
         # between the code and mm:ss) so they rendered as dead plain text. Now they become
         # clickable too, but carry data-time-source="approx" (dashed pill via viewer.css)
         # and a `~` prefix so the reader knows the time is only approximate.
         extra = ' data-time-source="approx" title="時間為約略值（agent 推估）"' if approx else ''
-        clk = "~" if approx else ""
-        return (f'<a class="ts" data-file="{escq(fn)}" data-t="{secs(mm, ss)}"{extra}>'
-                f'▶ {label} {clk}{mm}:{ss}</a>')
+        return (f'<a class="ts" data-file="{escq(fn)}" data-t="{t}"{extra}>'
+                f'▶ {label} {"~" if approx else ""}{disp}</a>')
 
-    # supports `(V1 00:01)` (V-map), `(00004.MTS 03:12)` (raw filename, legacy), and the
-    # approx variant `(V1 ⚠️approx 01:30)` / `(V1 approx 01:30)` (group 3 captures the marker)
-    # Audio extensions belong here too: an audio-only session (a recorder file with
-    # photographed slides) cites `(錄音-240526_1119.mp3 03:23)`, and while those were
-    # missing from this list the citation stayed dead plain text — no error anywhere,
-    # since a non-match is indistinguishable from prose.
-    md = re.sub(r'`?\((?:(V\d+)|([^()]+?\.(?:MTS|mts|mp4|MP4|mov|MOV|m2ts|M2TS|avi|AVI'
-                r'|mp3|MP3|m4a|M4A|wav|WAV|aac|AAC)))'
-                r' +(?:(⚠️?\s*approx|approx)\s*)?(\d+):(\d{2})\)`?', ts, md)
+    def ts_block(m):
+        """Parse a whole `(...)` citation into one or more pills.
+
+        Until 2026-08-07 this was a single 'one label + one time' regex, so anything
+        an agent wrote as a range `(V1 04:22–04:31)`, a list `(V1 05:02, 06:13)` or a
+        cross-clip pair `(V1 16:47, V2 00:00)` fell through as ==dead plain text, with
+        no error anywhere== — and the bullet's data-time-source silently degraded to
+        `inherited` (reusing the previous bullet's time). Batch audit over the 79
+        delivered courses: 51 of them affected, 8,086 citations, and 7,118 of 27,177
+        timed bullets (26%) mis-positioned because of it. Writing the format rule into
+        the dispatch prompt fixes new courses (the two courses that were told scored 0);
+        this fixes the ones already shipped, without touching a single note.
+
+          `,` `;` `/` `、` = a list  -> one pill per time, each jumpable
+          `-` `–` `~`     = a range -> ONE pill showing `04:22–04:31`, jumps to the start
+                                       (the end has no target in the viewer; keeping the
+                                        range visible preserves what the agent meant)
+
+        A time with no label reuses the previous label *inside the same parentheses*.
+        If the FIRST one has no label, the file is taken from the segment ONLY when the
+        segment has exactly one media file (no choice = no guess); otherwise the whole
+        citation is left alone — dead text beats a pill pointing at the wrong video.
+
+        A leading note is kept: `(練習段 V1 00:09-00:26)`, `(c00 14:17)` render as
+        `(練習段 ▶ V1 00:09–00:26)`. Trailing prose is still disqualifying, so
+        `(見 V1 07:30 的說明)` stays plain text.
+        """
+        inner = m.group(1)
+        # Fast path: the whole run is `<a filename the manifest knows> <time>`. Needed
+        # because a filename may itself contain a list separator —
+        # `20221029_143246病例-ACL, PCL, menis, Ten elbo, TFCC.mp4` is one real clip,
+        # and the general grammar would read those commas as a list of times.
+        whole = re.match(r'^\s*(.+?)\s+(\d{1,3}):([0-5]\d)\s*$', inner)
+        if whole and MEDIA_REL and os.path.basename(whole.group(1)) in MEDIA_REL:
+            fn = whole.group(1)
+            return one_ts(fn, os.path.splitext(fn)[0], False,
+                          f"{whole.group(2)}:{whole.group(3)}",
+                          secs(whole.group(2), whole.group(3)))
+        items, pos, lead = [], 0, ""
+        for tm in TS_TOKEN.finditer(inner):
+            gap = inner[pos:tm.start()]
+            if not TS_SEP.match(gap):
+                # only before the FIRST time may a gap be a note rather than a separator
+                if not items and TS_NOTE.match(gap):
+                    lead, gap = gap, ""
+                else:
+                    return m.group(0)     # real prose between times -> not a citation
+            items.append((gap, tm))
+            pos = tm.end()
+        tail = inner[pos:]
+        tail_secs = TS_TAIL_SECS.match(tail)   # `(V2 28:30-42)` -> ends at 28:42
+        if not items or not (TS_SEP.match(tail) or tail_secs):
+            return m.group(0)
+
+        out, label, fn = [], None, None
+        for gap, tm in items:
+            v, fn_raw, approx, h_or_m, mm_or_ss, ss_opt = tm.groups()
+            if v:
+                fn, label = vm.get(v), v
+            elif fn_raw:
+                fn = fn_raw.strip()     # the filename pattern may absorb leading space
+                label = os.path.splitext(fn)[0]
+            elif label is None:
+                if not only_file:
+                    return m.group(0)     # more than one candidate -> don't guess
+                fn, label = only_file, os.path.splitext(os.path.basename(only_file))[0]
+            if not fn:
+                return m.group(0)         # V-label with no entry in the V-map
+            # ==Never mint a pill for a clip this course does not have== — whichever
+            # route produced the filename (V-map, the note's declared table, the raw
+            # citation, the lone-clip fallback). Some notes cite a camera number the
+            # course renamed away; while those stayed dead text nobody noticed, but a
+            # link that silently does nothing is worse. One gate for every route, so a
+            # parsing slip anywhere downgrades to plain text instead of a broken link.
+            if MEDIA_REL and os.path.basename(fn) not in MEDIA_REL:
+                return m.group(0)
+            if ss_opt is None:            # MM:SS
+                t, disp = secs(h_or_m, mm_or_ss), f"{h_or_m}:{mm_or_ss}"
+            else:                         # H:MM:SS
+                t = int(h_or_m) * 3600 + secs(mm_or_ss, ss_opt)
+                disp = f"{h_or_m}:{mm_or_ss}:{ss_opt}"
+            # A range separator folds this time into the previous pill's label — but
+            # ONLY within one file. `(00006.MTS 29:50–00007.MTS 01:25)` is a stretch
+            # spanning two clips: folding it would show `29:50–01:25` and silently drop
+            # the second filename, so each end keeps its own pill.
+            if out and TS_RANGE.search(gap) and not (v or fn_raw):
+                prev_fn, prev_label, prev_approx, prev_disp, prev_t = out[-1]
+                out[-1] = (prev_fn, prev_label, prev_approx,
+                           f"{prev_disp}–{disp}", prev_t)
+                continue
+            out.append((fn, label, bool(approx), disp, t))
+        if tail_secs:                 # `28:30-42` -> show `28:30–28:42`
+            fn_, lb, ap, disp_, t_ = out[-1]
+            minute = disp_.rsplit("–", 1)[-1].split(":")[0]
+            out[-1] = (fn_, lb, ap, f"{disp_}–{minute}:{int(tail_secs.group(1)):02d}", t_)
+        return lead + " ".join(one_ts(*o) for o in out)
+
+    # Candidate = any parenthesised run holding a clock. Whether it really IS a citation
+    # is decided by ts_block (the whole run must parse as times + separators), so prose
+    # like "(收縮壓 120:80)" is returned untouched.
+    md = TS_BLOCK.sub(ts_block, md)
 
     def wl(m):
         sid = resolve_link(m.group(1)); a = m.group(2) or m.group(1)

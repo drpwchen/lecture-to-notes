@@ -15,7 +15,7 @@ Time-sliced courses (a single long lecture cut into many time windows — most
 didactic MRI/X-ray talks) have EMPTY `clips`/`files` and carry their clip refs
 ONLY inside the `time` string (`00_00000, 00:03-00:24；01_00001, 00:00-04:21`).
 Splitting purely on `clips` then wrote 5-line empty stubs (hit 2026-07-24 on both
-施庭芳 MRI-spine courses). Fallback: when `clips` is empty, parse the clip NAMES
+MRI-spine courses in one batch). Fallback: when `clips` is empty, parse the clip NAMES
 out of `time`, map them to indices via the L1 headers, and BACKFILL `clips` in
 segments.json so downstream (relabel_prep static detection, dispatch_pack) agrees.
 """

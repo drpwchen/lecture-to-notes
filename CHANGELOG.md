@@ -3,6 +3,43 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-08-07
+
+### Changed
+
+- **Timecode citations are now parsed, not pattern-matched.** `export_web.py` used a
+  single "one label + one time" regex, so every other way a writer naturally cites a
+  moment fell through as **dead plain text — with no error anywhere**, because a
+  non-match is indistinguishable from prose. Worse, the bullet's `data-time-source`
+  silently degraded to `inherited`, meaning it reused the *previous* bullet's
+  timestamp for scroll-sync. An audit of 79 delivered courses found 51 affected,
+  8,086 citations, and **7,118 of 27,177 timed bullets (26%) mis-positioned**.
+  The parser now accepts:
+  - ranges — `(V1 04:22–04:31)` → one pill showing the range, jumping to its start
+  - lists — `(V1 05:02, 06:13)` → one jumpable pill per time
+  - cross-clip spans — `(clipA 29:50–clipB 01:25)` → each end keeps its own pill
+  - three-digit minutes `(V1 100:43)` and second-only range ends `(V2 28:30-42)`
+  - a leading note — `(practice V1 00:09)`, `(c00 14:17)` — kept verbatim
+  - labels declared by the note's own `## 影片代號` table, so an audio-only source
+    cited as `(A1 06:59)` resolves; this table now outranks the positional V-map,
+    which was wrong for notes that continue numbering across segments
+  - an unlabelled `(08:27–12:33)` **only** when the segment has exactly one media
+    file. With more than one candidate it stays plain text: a pill pointing at the
+    wrong video is worse than no pill.
+  Seconds are validated as `00–59` so prose like `(120:80)` cannot match.
+
+### Fixed
+
+- **A citation naming a file the course does not have no longer becomes a link.**
+  One `MEDIA_REL` check now gates every route that produces a filename (V-map,
+  declared table, literal citation, single-clip fallback), so a parsing slip
+  downgrades to plain text instead of minting a button that silently does nothing.
+- **Filenames containing a comma resolve.** A real clip may be named
+  `20221029_143246-ACL, PCL, menisc, TFCC.mp4`; the grammar would have read those
+  commas as a list of times. A fast path matches the whole parenthesised run against
+  the manifest before the general grammar runs.
+- Placeholder names in two docstrings replaced with `<speaker>`/`<topic>`.
+
 ## [0.6.7] — 2026-08-05
 
 ### Fixed
