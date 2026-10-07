@@ -41,7 +41,7 @@ Usage:
                           [--force]
 
 Environment:
-    OLLAMA_URL      full generate endpoint (default http://localhost:11434/api/generate)
+    OLLAMA_URL      full generate endpoint (default http://127.0.0.1:11434/api/generate)
     VLM_MAX_WIDTH   downscale width before the call, 0 disables (default 900)
 
 Input:
@@ -82,7 +82,7 @@ except Exception:
 
 
 # Overridable so ollama can live on another host (or a tunnelled port).
-OLLAMA_URL = os.environ.get("OLLAMA_URL") or "http://localhost:11434/api/generate"
+OLLAMA_URL = os.environ.get("OLLAMA_URL") or "http://127.0.0.1:11434/api/generate"
 
 
 PROMPT = """You are analyzing one medical lecture slide. Return ONLY valid JSON.
