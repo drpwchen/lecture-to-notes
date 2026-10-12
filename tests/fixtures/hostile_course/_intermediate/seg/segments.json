@@ -1,0 +1,12 @@
+[
+  {
+    "seg": 1,
+    "files": ["talk.mp4"],
+    "clips": [1],
+    "slug": "hostile",
+    "make_l3": true,
+    "title_zh": "C# 與 <script> 50% 測試 \"引號\" & 'apos'    ",
+    "region": "<b>region</b>",
+    "display_order": 1
+  }
+]

@@ -30,9 +30,18 @@ let autoFollowSuspendedUntil = 0;
 /* ---- 2. helpers ---- */
 function q(sel, root=document){return root.querySelector(sel)}
 function qa(sel, root=document){return [...root.querySelectorAll(sel)]}
+// media URLs stay relative to this page: no scheme (javascript:/data:/http:), no
+// //host, no absolute path. The exporter already refuses them; this is the
+// second check for a hand-edited or old TIMELINE.
+function isRelativeUrl(u){
+  const s=String(u||'').replace(/[\u0000- \u007f]/g,'');
+  return !!s && !/^[a-z][a-z0-9+.\-]*:/i.test(s) && s[0]!=='/' && s.indexOf('\\')<0;
+}
 function mediaUrl(file){
-  if(mediaSrc[file]){const p=mediaSrc[file].split('/').map(encodeURIComponent).join('/'); return p;}
-  return mediaRoot.replace(/\/$/,'') + '/' + encodeURIComponent(file);
+  const own=Object.prototype.hasOwnProperty.call(mediaSrc, file) ? mediaSrc[file] : '';
+  if(own && isRelativeUrl(own)){const p=String(own).split('/').map(encodeURIComponent).join('/'); return p;}
+  const root=isRelativeUrl(mediaRoot) ? mediaRoot : '.';
+  return root.replace(/\/$/,'') + '/' + encodeURIComponent(file);
 }
 function fmt(t){t=Math.max(0,Math.floor(t||0)); return String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0')}
 function segmentById(id){return segments.find(s=>s.segment_id===id)}
@@ -339,14 +348,13 @@ function snippet(text, terms){
   let idx = -1;
   for(const term of terms){ const p = t.toLowerCase().indexOf(term); if(p>=0 && (idx<0 || p<idx)) idx=p; }
   let start = Math.max(0, idx - 24);
-  let frag = t.slice(start, start + 90);
-  let html = escHtml((start>0?'…':'') + frag + (start+90 < t.length ? '…' : ''));
-  for(const term of terms){
-    if(!term) continue;
-    const re = new RegExp('(' + term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')', 'ig');
-    html = html.replace(re, '<mark>$1</mark>');
-  }
-  return html;
+  let frag = (start>0?'…':'') + t.slice(start, start + 90) + (start+90 < t.length ? '…' : '');
+  // Match on the RAW text, escape each piece afterwards: highlighting the escaped
+  // string let a term like "amp" or "mark" match inside the markup we had just added.
+  const alts = terms.filter(Boolean).map(x=>x.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
+  if(!alts.length) return escHtml(frag);
+  const re = new RegExp('(' + alts.join('|') + ')', 'ig');
+  return frag.split(re).map((part,i)=> i%2 ? '<mark>'+escHtml(part)+'</mark>' : escHtml(part)).join('');
 }
 function runSearch(qstr){
   const panel = q('#search-results'); if(!panel) return;

@@ -63,18 +63,21 @@ Usage:
 Requires pandoc + ffmpeg/ffprobe on PATH (checked up front, before any work).
 """
 import json, os, re, sys, subprocess, shutil, html, hashlib, tempfile, argparse
+from urllib.parse import quote
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASSET_DIR = os.path.join(HERE, "layout2")
 
 sys.path.insert(0, HERE)
 from _common import atomic_write_json, load_config, require_binaries
+# Untrusted-content boundary (0.8.0): note/transcript/OCR text is data, never markup.
+from _html_safety import csp_meta, is_safe_relative_url, json_for_script, sanitize_fragment
 
 # Versioning — manifest schema is ADDITIVE ONLY (never remove/rename a field) so any
 # future viewer reads any past manifest, and any deployed HTML keeps working forever.
 # Upgrade path = regenerate from the (standardized) COURSE dir, NOT in-place migration.
 SCHEMA_VERSION = 3          # 2: media_src + version stamps · 3: slide_blocks (slide-layer search)
-VIEWER_VERSION = "layout2/2026.08.04"
+VIEWER_VERSION = "layout2/2026.10.13"   # .10.13: untrusted-content boundary (CSP, sanitizer)
 
 CODEC_LABEL = {"hevc": "H.265", "h264": "H.264"}
 CRF_DEFAULT = {"hevc": 24, "h264": 18}   # measured ≈-equivalents, 2026-08-03
@@ -489,7 +492,7 @@ def preprocess(md, seg):
                 lambda m: f"> **【{m.group(1).upper()}】{(' ' + m.group(2)) if m.group(2) else ''}**\n>",
                 md, flags=re.M)
     md = EMBED_RE.sub(
-                lambda m: f'<img class="fig" src="{IMG_URL_PREFIX}{IMG_MAP.get(m.group(1), m.group(1))}" loading="lazy">', md)
+                lambda m: f'<img class="fig" src="{escq(quote(IMG_URL_PREFIX + IMG_MAP.get(m.group(1), m.group(1)), safe="/"))}" loading="lazy">', md)
     # inline prose mentions of a frame-id (e.g. "見 `c04_frame_0003.jpg`") -> friendly name
     md = re.sub(r'c\d+_frame_\d+(?:\.jpg)?',
                 lambda m: IMG_MAP.get(m.group(0) if m.group(0).endswith('.jpg') else m.group(0) + '.jpg', m.group(0)), md)
@@ -634,7 +637,15 @@ def md2html(md, seg=None):
     if r.returncode != 0:
         print(f"WARNING: pandoc failed on a fragment: "
               f"{(r.stderr or '').strip()[:300]}", file=sys.stderr)
-    return r.stdout
+    # pandoc runs with raw_html on (notes legitimately use <br>, <sup>, and the
+    # pills/figures preprocess() emits), so its output is re-serialised through an
+    # allowlist: a transcript that says "<script>" shows those characters as text.
+    escaped = []
+    frag = sanitize_fragment(r.stdout, escaped)
+    if escaped:
+        print(f"  [sanitize] seg{seg}: {len(escaped)} tag(s) not on the allowlist shown as "
+              f"text: {', '.join(sorted(set(escaped))[:8])}", file=sys.stderr)
+    return frag
 
 
 def strip_tags(s):
@@ -868,6 +879,13 @@ def build_timeline(src_resolver):
                 continue
             seen.add(fn)
             url = src_resolver(fn)
+            if url and not is_safe_relative_url(url, allow_parent=True):
+                # media must resolve beside the page; a scheme/absolute path from the
+                # manifest would never play from a copied course and is refused by
+                # the page's CSP anyway — say so instead of shipping a dead link.
+                print(f"  ⚠️ media_src for {fn!r} is not a relative path ({url!r}) — "
+                      "falling back to media_root", file=sys.stderr)
+                url = None
             media_parts.append({"file": fn, "relative_path": url or fn, "exists": True, "duration_sec": None})
             if url:
                 media_src[fn] = url
@@ -1023,7 +1041,8 @@ def make_page(sections_wrapped, timeline, media_root):
     # config.yaml `export.author` (or --author), never in the source.
     footer = (f'<footer class="page-foot">{esc(AUTHOR)} 設計 · viewer {VIEWER_VERSION}</footer>'
               if AUTHOR else '')
-    tjson = json.dumps(timeline, ensure_ascii=False)
+    # json_for_script: a transcript line reading "</script>" must not end the element.
+    script = f"const TIMELINE = {json_for_script(timeline)};\n{JS_LOGIC}"
     body = f"""<body class="mode-split home-view">
 <header class="page-head">
   <div class="ph-meta"><span class="ph-title">{esc(COURSE_NAME)}</span><span class="ph-date">{head_date}</span>{type_badge_html()}</div>
@@ -1085,10 +1104,12 @@ def make_page(sections_wrapped, timeline, media_root):
   </aside>
 </div>
 {footer}
-<script>const TIMELINE = {tjson};
-{JS_LOGIC}</script>
+<script>{script}</script>
 </body>"""
+    # CSP pins the one inline script by hash and allows no network fetches, so
+    # markup that slips past sanitize_fragment still cannot run or phone home.
     return (f'<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">'
+            f'{csp_meta(script)}'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{esc(COURSE_NAME)} — 影片筆記整合</title><style>{CSS}</style></head>\n{body}\n</html>')
 

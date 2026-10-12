@@ -12,7 +12,7 @@ projection of it.**
   happened.
 - Repo-only files may be edited here freely: `README.md`, `LICENSE`,
   `CHANGELOG.md`, `SYNC-LEDGER.md`, `.gitignore`, `requirements*.txt`, `docs/`,
-  `tools/` (including `tools/templates/`).
+  `tools/` (including `tools/templates/`), `tests/`.
 
 ## Source
 
@@ -85,4 +85,5 @@ likely a fix lands in only one of them.
 | 2026-08-02 | Initial export. 56 manifest entries; 6 transforms + 1 override. |
 | 2026-08-05 | v0.6.0 real-timeline pass. 60 entries: 3 created (`_mdpm.py`, `batch/course_timeline.py`, `batch/audit_segmentation.py`), 7 updated. ==De-identification was done UPSTREAM this time==: the new docs and code comments originally named a real conference and four real speakers, and were rewritten in the skill itself to `Conference-Y` / `<speaker>` before syncing, so no new transform was needed. That is the direction this ledger recommends above — keep doing it that way. |
 | 2026-09-01 | v0.7.1 small-GPU handling. 60 entries, 9 updated. Trigger: a user with a 2 GB card read `gpu_check` "blocked" as a broken machine. Edited upstream (`gpu_check.py`, `transcribe_video.py`, `retranscribe_segment.py`, `SKILL.md`, `reference/pipeline.md`) then synced; the sync also carried the 2026-08-10 `gpu_lease_ctx` refactor (no-op off this machine) and the 2026-08-25 `build_L1.py` deck-text change, both logged in the CHANGELOG. Name sweep of the full diff: clean. |
+| 2026-10-13 | v0.8.0 viewer hardening (issue #1). ==Edited in this repo first, against the standing rule==, because the work was scoped to the public repo: `scripts/export_web.py`, `scripts/layout2/viewer.js`, and the new `scripts/_html_safety.py`. The same change is prepared as a patch against the upstream skill; ==apply it upstream before the next sync==, or the sync silently reverts the hardening (`_html_safety.py` would survive — the glob never deletes — but `export_web.py`/`viewer.js` would not). Upstream had also drifted ahead on 11 synced files before this change; those are not part of 0.8.0. |
 | 2026-08-07 | v0.7.0 timecode parser. 60 entries, 2 updated (`export_web.py`, `batch/split_L1_by_segment.py`). De-identification upstream again, and this time the sweep also caught a **pre-existing** leak that predates this change: a real speaker name sitting in `split_L1_by_segment.py`'s module docstring since 2026-07-24, already public. ==Grep the whole repo for real names on every sync, not just the files you touched== — the per-change check would never have found it. |

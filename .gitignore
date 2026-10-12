@@ -23,6 +23,8 @@ asr_suspects.txt
 alignment.json
 metadata.json
 web_export/
+# ...except the hand-written test fixtures, which mimic that output on purpose.
+!tests/fixtures/**/slides_*.json
 
 # Benchmark inputs and results are bring-your-own (see ocr_bench/README.md).
 ocr_bench/fixtures/

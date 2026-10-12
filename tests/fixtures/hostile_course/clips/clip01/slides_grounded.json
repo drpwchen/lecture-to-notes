@@ -1,0 +1,10 @@
+[
+  {
+    "filename": "frame_0001.png",
+    "timestamp_start": 5,
+    "timestamp_end": 30,
+    "dedup": {"is_canonical": true},
+    "ocr": {"clean_text": "Slide OCR text </script><script>window.__pwned='ocr'</script> <!-- comment --> Content Security Policy slide"},
+    "vlm_signals": {"content_type": ["text"]}
+  }
+]

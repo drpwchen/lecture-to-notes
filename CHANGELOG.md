@@ -3,6 +3,65 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-10-13
+
+Follow-up to [issue #1](https://github.com/drpwchen/lecture-to-notes/issues/1)
+(point 6, "synced HTML viewer untrusted-content boundary", plus the roadmap items
+that need neither a Mac nor a change in how the pipeline is used).
+
+### Security
+
+- **The viewer treats every note as data.** Transcripts are ASR of whatever was
+  said, slide text is OCR of whatever was on screen, and the Stage F synthesis is
+  an LLM paraphrase of both — none of it is markup we wrote. Before this release
+  `export_web.py` passed raw HTML in a note straight into the page, and embedded
+  the timeline as plain `json.dumps` inside `<script>`. A hostile fixture course
+  showed three real failures on 0.7.1: an `<img onerror>` / `<script>` in a note
+  became live markup; slide OCR text containing `</script>` ended the viewer's own
+  script, so **the page stopped working** (`Invalid or unexpected token`); and a
+  lecture that merely *mentions* an unclosed `<script>` tag silently swallowed
+  every later transcript bullet of that segment (3 of 7 synced, the rest gone).
+  Now, four independent layers (new module `scripts/_html_safety.py`, stdlib only):
+  - **Allowlist re-serialisation** of pandoc's output. Tags not on the list are
+    **shown as text, not dropped** — a talk on web security keeps every word.
+    Event handlers, `javascript:`/`data:`/remote URLs, `style` beyond a few layout
+    properties, ids the viewer itself uses, and unbalanced/stray tags (which could
+    close the viewer's own `<section>`/`<main>`) are removed. The exporter prints a
+    `[sanitize]` line naming what it escaped.
+  - **Script-safe JSON**: `<`, `>`, `&`, U+2028/9 in the embedded timeline are
+    `\uXXXX`-escaped; the parsed value is unchanged.
+  - **Content-Security-Policy** (`<meta>`, first thing in `<head>`):
+    `default-src 'none'`, the one inline script pinned by its SHA-256, images and
+    media only from the page's own folder, `base-uri`/`form-action 'none'`. An
+    offline viewer needs nothing else, so even markup that slipped past the
+    sanitizer can neither run nor fetch a tracking pixel.
+  - **Media/image URL allowlist**: figure `src` and `media_src` must be relative
+    paths (no scheme, host, absolute path or backslash; figures also no `..`),
+    checked in the exporter and again in `viewer.js`.
+- Figure `src` is percent-encoded: a segment title containing `#` or `%` used to
+  produce an image URL the browser cut at the `#`.
+- Viewer search highlighting matched terms against the already-escaped snippet,
+  so searching `amp` produced `&<mark>amp</mark>;`. It now matches the raw text
+  and escapes each piece.
+
+### Verified
+
+- Regression over 82 real delivered courses (31,544 synced note blocks, 73,036
+  timecode pills, 3,628 figures): block timing, block text and section text are
+  **identical** before and after; the only attribute the sanitizer removed across
+  the corpus was pandoc's `data-cites`, which is now allowlisted. Five of the
+  pages loaded in headless Chrome with zero CSP violations and zero script errors.
+- `tests/test_viewer_hostile.py` exports `tests/fixtures/hostile_course` (every
+  string an attack: course title, segment title, transcript, synthesis, slide
+  OCR, U+2028/9, RTL override) and checks the page statically and in a real
+  browser over `file://` — including injecting live markup *after* the sanitizer
+  to prove the CSP alone blocks it. All 9 of those tests fail on 0.7.1.
+
+### Changed
+
+- `VIEWER_VERSION` → `layout2/2026.10.13`. Schema unchanged (still v3); old
+  pages keep working, re-export to get the hardening.
+
 ## [0.7.1] — 2026-09-01
 
 ### Fixed

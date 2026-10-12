@@ -100,6 +100,12 @@ summary notes are presented **together and kept in sync both ways**:
   clips, friendly-named slides, markdown + PDF copies). No server, no build
   step for the reader — send the folder, they double-click the page.
   `--compress` produces a smaller H.264 set for handing around.
+- **Notes are data, not markup**: transcript, slide OCR and synthesis text is
+  re-serialised through an HTML allowlist (a transcript that says `<script>`
+  shows those characters), the embedded timeline JSON cannot end its `<script>`,
+  and a Content-Security-Policy pins the page's one inline script by hash and
+  allows no network fetches. Tested against a hostile fixture course in a real
+  browser (`tests/test_viewer_hostile.py`).
 
 Real output from a cervical-ultrasound workshop (dates and speaker names
 blurred):
@@ -257,6 +263,7 @@ and `audit_note.py` mechanically checks it.
 | `scripts/` | The pipeline (see `SKILL.md` for what each stage does) |
 | `scripts/batch/` | Generic batch layer: segment splitting, language detection, caching |
 | `scripts/layout2/` | Web viewer assets for `export_web.py` |
+| `tests/` | Dependency-light tests (`pytest`), incl. a hostile-content viewer fixture |
 | `ocr_bench/` | OCR engine A/B/C harness — bring your own fixtures |
 | `data/` | Word/acronym frequency lists used to flag suspect ASR tokens |
 | `docs/AUDIT_SUMMARY.md` | What the pre-release audit found, and two things it got wrong |
