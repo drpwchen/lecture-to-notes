@@ -35,7 +35,8 @@ function qa(sel, root=document){return [...root.querySelectorAll(sel)]}
 // second check for a hand-edited or old TIMELINE.
 function isRelativeUrl(u){
   const s=String(u||'').replace(/[\u0000- \u007f]/g,'');
-  return !!s && !/^[a-z][a-z0-9+.\-]*:/i.test(s) && s[0]!=='/' && s.indexOf('\\')<0;
+  // `c|/x` is a drive letter to the URL parser on a file:// page
+  return !!s && !/^[a-z][a-z0-9+.\-]*:/i.test(s) && !/^[a-z]\|/i.test(s) && s[0]!=='/' && s.indexOf('\\')<0;
 }
 function mediaUrl(file){
   const own=Object.prototype.hasOwnProperty.call(mediaSrc, file) ? mediaSrc[file] : '';

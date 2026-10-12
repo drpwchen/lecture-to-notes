@@ -243,6 +243,11 @@ def test_browser_runs_viewer_and_no_payload(exported, browser):
     # ...and a timecode pill drives the player
     page.click("a.ts >> nth=0")
     assert "talk.mp4" in page.inner_text("#now")
+    # viewer.js's own second check on media URLs (a hand-edited TIMELINE)
+    for bad in ("javascript:x", "c|/Windows/x.mp4", "C:/x.mp4", "/abs.mp4", "//h/x.mp4",
+                "\\\\srv\\x.mp4", " java\tscript:x"):
+        assert page.evaluate("u => isRelativeUrl(u)", bad) is False, bad
+    assert page.evaluate("u => isRelativeUrl(u)", "影片筆記整合/媒體/影片/01.mp4") is True
     page.fill("#search-input", "ocr")
     page.wait_for_timeout(200)
     assert page.evaluate("window.__pwned === undefined")
