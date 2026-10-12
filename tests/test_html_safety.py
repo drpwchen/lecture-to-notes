@@ -220,7 +220,7 @@ def test_relative_urls_accepted(u):
 @pytest.mark.parametrize("u", [
     "", "   ", "javascript:alert(1)", "JAVASCRIPT:x", " java\nscript:x", "data:image/png;base64,AA",
     "https://x.example/a.png", "//x.example/a.png", "/abs.png", "\\\\server\\share\\a.png",
-    "C:/x.png", "file:///etc/passwd", "../x.png", "a/../../x.png", "..%2fx.png",
+    "C:/x.png", "c|/x.png", "C|\\x.png", "file:///etc/passwd", "../x.png", "a/../../x.png", "..%2fx.png",
     "%2e%2e/x.png", "a/%2e%2e/%2e%2e/x.png", None, 42,
 ])
 def test_unsafe_urls_rejected(u):

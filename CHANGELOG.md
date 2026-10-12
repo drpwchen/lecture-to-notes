@@ -36,7 +36,8 @@ that need neither a Mac nor a change in how the pipeline is used).
     offline viewer needs nothing else, so even markup that slipped past the
     sanitizer can neither run nor fetch a tracking pixel.
   - **Media/image URL allowlist**: figure `src` and `media_src` must be relative
-    paths (no scheme, host, absolute path or backslash; figures also no `..`),
+    paths (no scheme, host, absolute path, backslash, or `c|/` drive form —
+    which a `file://` page resolves to a local drive; figures also no `..`),
     checked in the exporter and again in `viewer.js`.
 - Figure `src` is percent-encoded: a segment title containing `#` or `%` used to
   produce an image URL the browser cut at the `#`.

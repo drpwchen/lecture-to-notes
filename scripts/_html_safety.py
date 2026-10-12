@@ -42,6 +42,8 @@ from urllib.parse import unquote
 # URL allowlist
 # ---------------------------------------------------------------------------
 _SCHEME = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*):")
+# WHATWG: relative to a file: page, "c|/x" is the Windows drive "file:///c:/x".
+_DRIVE_PIPE = re.compile(r"^[A-Za-z]\|")
 # Browsers strip these before parsing a URL, so "java\tscript:" is "javascript:".
 _URL_STRIP = re.compile(r"[\x00-\x20\x7f]")
 LINK_SCHEMES = {"http", "https", "mailto"}
@@ -63,10 +65,11 @@ def is_safe_relative_url(u, allow_parent: bool = False) -> bool:
     core = _url_core(u)
     if not core or "\\" in core or core.startswith("/"):
         return False
-    if _SCHEME.match(core):
+    if _SCHEME.match(core) or _DRIVE_PIPE.match(core):
         return False
     decoded = unquote(core)
-    if "\\" in decoded or decoded.startswith("/") or _SCHEME.match(decoded):
+    if ("\\" in decoded or decoded.startswith("/") or _SCHEME.match(decoded)
+            or _DRIVE_PIPE.match(decoded)):
         return False
     if not allow_parent:
         path = decoded.split("?", 1)[0].split("#", 1)[0]
