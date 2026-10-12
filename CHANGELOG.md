@@ -57,6 +57,22 @@ that need neither a Mac nor a change in how the pipeline is used).
   browser over `file://` — including injecting live markup *after* the sanitizer
   to prove the CSP alone blocks it. All 9 of those tests fail on 0.7.1.
 
+### Added
+
+- **`route_inputs.py --json` is now a shell-free execution plan** (issue #1,
+  point 4). Every step keeps its copy-paste `cmd` string and additionally
+  carries `argv` (the same command as a list — run it without a shell, so a
+  folder named `Lecture (2026) day 1` needs no quoting), `program`/`script`/
+  `args`, `network` (`none`, or `loopback` for Stage D's local ollama server),
+  `gpu` (loads a model into VRAM), `reads`/`writes` (paths; a directory means
+  anything under it), `placeholders` (`<LANG>`, `<SECONDS>`, `<REC_NAME>` —
+  values only a human can supply) and `runnable` (an argv with no placeholder
+  left). Steps that are not a command — Stage F, the PDF render note, choosing
+  the timeline transcript — have `argv: null`. The plan gains
+  `"plan_schema": 2`; nothing was renamed or removed, and the human-readable
+  output is byte-identical (checked against 0.7.1 on 14 material combinations,
+  with and without spaces in the path).
+
 ### Changed
 
 - `VIEWER_VERSION` → `layout2/2026.10.13`. Schema unchanged (still v3); old

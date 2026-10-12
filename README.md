@@ -215,6 +215,9 @@ python scripts/route_inputs.py /path/to/material_folder
 `route_inputs.py` is the front door. It classifies the folder, prints the ordered
 commands for the right path, and lists the questions a human has to answer
 first. **It is plan-only** — it never runs anything and never writes a file.
+For agents and workflow engines, `--json` gives each step as an argv list (no
+shell parsing) with `network`, `gpu`, `reads`/`writes` and the `<LANG>`-style
+`placeholders` a human must fill before the step is `runnable`.
 
 Then run the printed commands. The first one is transcription, and it will not
 start without `--lang`:

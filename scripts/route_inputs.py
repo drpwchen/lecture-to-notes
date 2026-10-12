@@ -21,10 +21,21 @@ Two things are deliberately NOT defaulted:
     are present. Step 0 then emits the hypotheses and the xcorr command that
     checks them, because filename order and mtime have both silently dropped
     and reordered material before.
+
+`--json` is the machine interface. Next to each copy-pastable `cmd` string, a
+step carries the same command as an ==argv list== (run it without a shell — no
+quoting, no parsing), plus what an agent or workflow engine needs to approve it
+up front: `network` ("none" / "loopback" for the local ollama server),
+`gpu` (loads a model into VRAM), `reads` / `writes` (paths; a directory means
+anything under it), and `placeholders` — the `<LANG>`-style tokens a human must
+fill in first. `runnable` is true only when there is an argv and no placeholder
+is left. Steps that are not a command (Stage F, the PDF render note, picking
+the timeline transcript) have `argv: null`.
 """
 import argparse
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -80,11 +91,23 @@ def _q(p):
     return f'"{p}"' if (" " in p or "(" in p) else p
 
 
+# `<LANG>`, `<SECONDS>`, `<REC_NAME>`: values only a human can supply.
+_PLACEHOLDER = re.compile(r"<[^<>]+>")
+PLAN_SCHEMA = 2     # 1: steps had cmd only · 2: + argv/network/gpu/reads/writes (additive)
+
+
+def _py(script, *args):
+    """argv for one pipeline script: ["python", <absolute script path>, *args]."""
+    return ["python", os.path.join(HERE, script)] + [str(a) for a in args]
+
+
 def build_plan(buckets, in_dir, out_dir):
     """-> {"inputs": {...}, "questions": [...], "steps": [...], "warnings": [...]}
 
-    Each step is {"n", "what", "why", "cmd"|None}. Commands are strings with
-    real paths already substituted.
+    Each step is {"n", "what", "why", "cmd"|None} plus the structured fields
+    described in the module docstring (argv, program, script, args, network,
+    gpu, reads, writes, placeholders, runnable). `cmd` is a string with real
+    paths already substituted and quoted; `argv` is the same command unquoted.
     """
     video, audio = buckets["video"], buckets["audio"]
     pdf, images = buckets["pdf"], buckets["image"]
@@ -109,8 +132,20 @@ def build_plan(buckets, in_dir, out_dir):
     n_source_kinds = sum(bool(x) for x in (video, audio, deck_images))
     scripts = HERE
 
-    def add(what, why, cmd=None):
-        steps.append({"n": len(steps) + 1, "what": what, "why": why, "cmd": cmd})
+    def add(what, why, cmd=None, argv=None, reads=(), writes=(), network="none",
+            gpu=False):
+        holes = sorted({h for a in (argv or []) for h in _PLACEHOLDER.findall(a)})
+        steps.append({
+            "n": len(steps) + 1, "what": what, "why": why, "cmd": cmd,
+            "argv": argv,
+            "program": argv[0] if argv else None,
+            "script": argv[1] if argv else None,
+            "args": argv[2:] if argv else None,
+            "network": network, "gpu": gpu,
+            "reads": list(reads), "writes": list(writes),
+            "placeholders": holes,
+            "runnable": bool(argv) and not holes,
+        })
 
     # --- Step 0: alignment backbone ----------------------------------
     if n_source_kinds >= 2 or len(video) + len(audio) >= 2:
@@ -121,7 +156,12 @@ def build_plan(buckets, in_dir, out_dir):
             "silently reordered material before.",
             f'python {_q(os.path.join(scripts, "media_capture_index.py"))} '
             f'{_q(os.path.join(out_dir, "media_index.json"))} {_q(in_dir)} '
-            f'--emit-alignment {_q(os.path.join(out_dir, "alignment.json"))}')
+            f'--emit-alignment {_q(os.path.join(out_dir, "alignment.json"))}',
+            argv=_py("media_capture_index.py", os.path.join(out_dir, "media_index.json"),
+                     in_dir, "--emit-alignment", os.path.join(out_dir, "alignment.json")),
+            reads=[in_dir],
+            writes=[os.path.join(out_dir, "media_index.json"),
+                    os.path.join(out_dir, "alignment.json")])
         warnings.append(
             "Read alignment.json before aligning anything: any source with "
             "reliable=false has no trustworthy capture start and must not be "
@@ -134,7 +174,9 @@ def build_plan(buckets, in_dir, out_dir):
             "Whisper needs ~5-6 GB free VRAM; running it against a loaded model "
             "OOMs mid-stage or fragments silently.",
             f'python {_q(os.path.join(scripts, "gpu_check.py"))} '
-            f'--out-dir {_q(out_dir)} --min-free-mb 6000')
+            f'--out-dir {_q(out_dir)} --min-free-mb 6000',
+            argv=_py("gpu_check.py", "--out-dir", out_dir, "--min-free-mb", 6000),
+            writes=[out_dir])
         multi = len(speech_files) > 1
         for f in speech_files:
             # One ASR dir per source when there are several: they all write
@@ -149,7 +191,10 @@ def build_plan(buckets, in_dir, out_dir):
                    if multi else ""),
                 f'python {_q(os.path.join(scripts, "transcribe_video.py"))} '
                 f'{_q(f)} --output-dir {_q(f_out)} --lang <LANG> '
-                f'--batch-size 3 --beam-size 10')
+                f'--batch-size 3 --beam-size 10',
+                argv=_py("transcribe_video.py", f, "--output-dir", f_out,
+                         "--lang", "<LANG>", "--batch-size", 3, "--beam-size", 10),
+                reads=[f], writes=[f_out], gpu=True)
         first_speech = speech_files[0]
         asr_dir = (os.path.join(out_dir, "asr",
                                 os.path.splitext(os.path.basename(first_speech))[0])
@@ -160,7 +205,9 @@ def build_plan(buckets, in_dir, out_dir):
             "— a confident wrong term is worse than a visible garble."
             + (" Run once per ASR dir." if multi else ""),
             f'python {_q(os.path.join(scripts, "flag_asr_suspects.py"))} '
-            f'--dir {_q(asr_dir)}')
+            f'--dir {_q(asr_dir)}',
+            argv=_py("flag_asr_suspects.py", "--dir", asr_dir),
+            reads=[asr_dir], writes=[asr_dir])
         if multi:
             add("measure the real offsets between the sources",
                 "the capture times from step 0 are hypotheses; this is the "
@@ -170,7 +217,14 @@ def build_plan(buckets, in_dir, out_dir):
                 f'{_q(os.path.join(out_dir, "xcorr.json"))} '
                 f'--clip-asr {_q(os.path.join(out_dir, "asr"))} '
                 f'--recording <REC_NAME>=<ASR dir of the full-room source> '
-                f'--index {_q(os.path.join(out_dir, "media_index.json"))}')
+                f'--index {_q(os.path.join(out_dir, "media_index.json"))}',
+                argv=_py("xcorr_media_offsets.py", os.path.join(out_dir, "xcorr.json"),
+                         "--clip-asr", os.path.join(out_dir, "asr"),
+                         "--recording", "<REC_NAME>=<ASR dir of the full-room source>",
+                         "--index", os.path.join(out_dir, "media_index.json")),
+                reads=[os.path.join(out_dir, "asr"),
+                       os.path.join(out_dir, "media_index.json")],
+                writes=[os.path.join(out_dir, "xcorr.json")])
             warnings.append(
                 "Multiple audio sources: decide which ONE is the note's timeline "
                 "before Stage E, and feed xcorr.json back through "
@@ -187,12 +241,18 @@ def build_plan(buckets, in_dir, out_dir):
             "Preferred over video frames whenever a deck exists.",
             f'# fitz: write {_q(os.path.join(out_dir, "pdf_text.json"))} + '
             f'render each page to {_q(os.path.join(out_dir, "slides"))}/'
-            f'page_NN.jpg  (source: {_q(pdf[0])})')
+            f'page_NN.jpg  (source: {_q(pdf[0])})',
+            reads=[pdf[0]],
+            writes=[os.path.join(out_dir, "pdf_text.json"),
+                    os.path.join(out_dir, "slides")])
         add("build slides from the PDF",
             "Path B bridge into Stage D/E.",
             f'python {_q(os.path.join(scripts, "build_slides_from_pdf.py"))} '
             f'{_q(out_dir)}'
-            + (' --audio-duration-sec <SECONDS>' if speech_files else ''))
+            + (' --audio-duration-sec <SECONDS>' if speech_files else ''),
+            argv=_py("build_slides_from_pdf.py", out_dir,
+                     *(["--audio-duration-sec", "<SECONDS>"] if speech_files else [])),
+            reads=[out_dir], writes=[out_dir])
         if len(pdf) > 1:
             warnings.append(f"{len(pdf)} PDFs present — the command above uses "
                             "one lecture dir; run one lecture at a time.")
@@ -204,7 +264,10 @@ def build_plan(buckets, in_dir, out_dir):
             "schema Stage D/E expect.",
             f'python {_q(os.path.join(scripts, "build_slides_from_images.py"))} '
             f'{_q(in_dir)} -o {_q(out_dir)}'
-            + (' --audio-duration-sec <SECONDS>' if speech_files else ''))
+            + (' --audio-duration-sec <SECONDS>' if speech_files else ''),
+            argv=_py("build_slides_from_images.py", in_dir, "-o", out_dir,
+                     *(["--audio-duration-sec", "<SECONDS>"] if speech_files else [])),
+            reads=[in_dir], writes=[out_dir])
         warnings.append(
             "Check the ordering summary that command prints. If it warns that "
             "capture-time and filename order disagree, look at the slides "
@@ -214,15 +277,19 @@ def build_plan(buckets, in_dir, out_dir):
         add("extract frames (Stage A)",
             "no deck available, so the slides come from the video itself.",
             f'python {_q(os.path.join(scripts, "extract_slides.py"))} '
-            f'{_q(video[0])} --output-dir {_q(out_dir)}')
+            f'{_q(video[0])} --output-dir {_q(out_dir)}',
+            argv=_py("extract_slides.py", video[0], "--output-dir", out_dir),
+            reads=[video[0]], writes=[out_dir])
         add("quick OCR (Stage B)",
             "RapidOCR text + entropy metrics; required — without it every slide "
             "looks decorative to the Stage D gate.",
-            f'python {_q(os.path.join(scripts, "quick_ocr.py"))} {_q(out_dir)}')
+            f'python {_q(os.path.join(scripts, "quick_ocr.py"))} {_q(out_dir)}',
+            argv=_py("quick_ocr.py", out_dir), reads=[out_dir], writes=[out_dir])
         add("semantic dedup (Stage C)",
             "collapses near-identical frames into canonical slides.",
             f'python {_q(os.path.join(scripts, "dedup_semantic.py"))} '
-            f'{_q(out_dir)}')
+            f'{_q(out_dir)}',
+            argv=_py("dedup_semantic.py", out_dir), reads=[out_dir], writes=[out_dir])
     else:
         slide_route = None
         if speech_files:
@@ -235,7 +302,9 @@ def build_plan(buckets, in_dir, out_dir):
         add("VLM signals (Stage D)",
             "semantic signals per canonical slide (no OCR — Stage B/PDF text is "
             "the text source). ==Never skip for speed.==",
-            f'python {_q(os.path.join(scripts, "vlm_signals.py"))} {_q(out_dir)}')
+            f'python {_q(os.path.join(scripts, "vlm_signals.py"))} {_q(out_dir)}',
+            argv=_py("vlm_signals.py", out_dir), reads=[out_dir], writes=[out_dir],
+            network="loopback", gpu=True)     # ollama HTTP on 127.0.0.1
         if speech_files:
             if ground_dir != out_dir:
                 # ground_slides.py reads slides_vlm.json AND transcript.json from
@@ -248,14 +317,18 @@ def build_plan(buckets, in_dir, out_dir):
                     "transcript there.",
                     f'copy {_q(os.path.join(ground_dir, "transcript.json"))} '
                     f'{_q(os.path.join(out_dir, "transcript.json"))}'
-                    '   # <- swap in whichever ASR dir is the timeline')
+                    '   # <- swap in whichever ASR dir is the timeline',
+                    reads=[os.path.join(ground_dir, "transcript.json")],
+                    writes=[os.path.join(out_dir, "transcript.json")])
             add("transcript grounding (Stage E)",
                 "ties each slide to the words spoken over it. ==Never skip.==",
                 f'python {_q(os.path.join(scripts, "ground_slides.py"))} '
-                f'{_q(out_dir)}')
+                f'{_q(out_dir)}',
+                argv=_py("ground_slides.py", out_dir), reads=[out_dir], writes=[out_dir])
         add("Stage F synthesis (Claude)",
             "the only step that costs tokens: read the stage outputs and write "
-            "the vault note, then render embeds + finalize.", None)
+            "the vault note, then render embeds + finalize.", None,
+            reads=[out_dir], network=None)   # whichever LLM the agent uses
 
     if video:
         add("web viewer export (default whenever there is video)",
@@ -266,7 +339,10 @@ def build_plan(buckets, in_dir, out_dir):
             "sharing to machines you can't verify.",
             f'python {_q(os.path.join(scripts, "build_single_talk_web.py"))} '
             f'{_q(out_dir)} --plan {_q(os.path.join(out_dir, "seg_plan.json"))} '
-            f'--export')
+            f'--export',
+            argv=_py("build_single_talk_web.py", out_dir,
+                     "--plan", os.path.join(out_dir, "seg_plan.json"), "--export"),
+            reads=[out_dir], writes=[out_dir])
 
     # --- Things this router refuses to guess about ---------------------
     for p in buckets["convert_first"]:
@@ -287,6 +363,7 @@ def build_plan(buckets, in_dir, out_dir):
             "concatenate by filename.")
 
     return {
+        "plan_schema": PLAN_SCHEMA,
         "input_dir": in_dir,
         "out_dir": out_dir,
         "inputs": {k: [os.path.basename(p) for p in v]

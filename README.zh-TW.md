@@ -139,6 +139,10 @@ cp config.example.yaml config.yaml
 python scripts/route_inputs.py /path/to/素材資料夾
 ```
 
+給 agent／workflow 引擎用的話加 `--json`：每一步都附 argv 陣列（不經 shell 解析），
+以及 `network`、`gpu`、`reads`／`writes`，和需要人先填的 `<LANG>` 這類
+`placeholders`——填完才算 `runnable`。
+
 照印出來的指令跑。轉錄一定要給 `--lang`，沒有預設值——語言猜錯的話 Whisper
 會把有口音的英文幻覺成流暢的中文，而且要等你讀了逐字稿才會發現。
 
