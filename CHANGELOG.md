@@ -85,6 +85,16 @@ that need neither a Mac nor a change in how the pipeline is used).
   instead of quietly skipping the security tests. The unit tests also pass
   locally on Python 3.13 and 3.14, whose `html.parser` changed.
 
+### Documentation
+
+- **`docs/transcript-contract.md`**: what `transcript.json` must contain so an
+  external ASR or an existing transcript can feed Stages A–E without re-running
+  Stage 0 — the contract a transcript importer (issue #1, point 1) should
+  produce. Written from the code: which keys each reader requires, which shape
+  every reader accepts (the bare list), where provenance is recorded.
+- **`SECURITY.md`**: report vulnerabilities through GitHub Private
+  Vulnerability Reporting.
+
 ### Not done (and why)
 
 - **Lockfile / constraints file** (point 7): a lock is only honest when CI

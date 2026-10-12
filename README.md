@@ -271,6 +271,8 @@ and `audit_note.py` mechanically checks it.
 | `ocr_bench/` | OCR engine A/B/C harness — bring your own fixtures |
 | `data/` | Word/acronym frequency lists used to flag suspect ASR tokens |
 | `docs/AUDIT_SUMMARY.md` | What the pre-release audit found, and two things it got wrong |
+| `docs/transcript-contract.md` | What `transcript.json` must contain for an external ASR / transcript importer |
+| `SECURITY.md` | How to report a vulnerability privately |
 | `tools/sync_from_skill.py` | Maintenance: re-export from the upstream skill tree |
 
 ## Design notes worth knowing before you change something
