@@ -72,6 +72,33 @@ that need neither a Mac nor a change in how the pipeline is used).
   `"plan_schema": 2`; nothing was renamed or removed, and the human-readable
   output is byte-identical (checked against 0.7.1 on 14 material combinations,
   with and without spaces in the path).
+- **`pyproject.toml`** (issue #1, point 7): metadata, `requires-python >=3.12`,
+  and the dependency lists — kept identical to `requirements*.txt` by
+  `tests/test_packaging.py`, which also checks the version against this
+  changelog. Nothing about running the pipeline changes: the scripts are still
+  run as files, `pip install -r requirements.txt` is still the documented
+  install, and `pip install .` installs the same dependencies and no code.
+- **Test CI** (`.github/workflows/tests.yml`): `compileall` + `pytest` on
+  Ubuntu, Windows and macOS (Python 3.12), plus an Ubuntu job that installs
+  pandoc, ffmpeg and a headless Chromium to run the hostile-viewer tests for
+  real. That job sets `LTN_REQUIRE_VIEWER_E2E=1`, so a missing tool fails it
+  instead of quietly skipping the security tests. The unit tests also pass
+  locally on Python 3.13 and 3.14, whose `html.parser` changed.
+
+### Not done (and why)
+
+- **Lockfile / constraints file** (point 7): a lock is only honest when CI
+  installs and exercises it. The heavy dependencies (faster-whisper/CTranslate2,
+  RapidOCR/onnxruntime, PyMuPDF) are not exercised by any CI test yet, so a lock
+  frozen from one development machine would claim a tested combination that
+  nobody tested.
+- **Shared path-containment helper** (point 5) and **per-stage provenance
+  manifest / `--local-only`** (point 8): both touch the I/O of most stage
+  scripts, which needs a real-data verification pass upstream first. Note for
+  point 8: no stage falls back from local to cloud today — Groq is used only
+  with an explicit `--engine groq`, and its fallback goes cloud → local.
+- **Transcript importer and Apple Silicon profile** (points 1–2): left for the
+  contributor's PR — they need a Mac to verify.
 
 ### Changed
 

@@ -26,9 +26,14 @@ from conftest import FIXTURES, SCRIPTS
 from _html_safety import is_safe_link, is_safe_relative_url, script_hash
 
 NEEDS = ("pandoc", "ffmpeg", "ffprobe")
+# CI sets this so a missing tool FAILS the job instead of skipping: a security
+# test that silently skips reports success about something it never looked at.
+REQUIRED = os.environ.get("LTN_REQUIRE_VIEWER_E2E") == "1"
+_missing = [b for b in NEEDS if shutil.which(b) is None]
+if _missing and REQUIRED:
+    raise RuntimeError(f"LTN_REQUIRE_VIEWER_E2E=1 but not on PATH: {_missing}")
 pytestmark = pytest.mark.skipif(
-    any(shutil.which(b) is None for b in NEEDS),
-    reason="export_web needs pandoc + ffmpeg/ffprobe on PATH")
+    bool(_missing), reason="export_web needs pandoc + ffmpeg/ffprobe on PATH")
 
 
 def _png():
@@ -190,10 +195,15 @@ def _launch(p):
 
 @pytest.fixture(scope="module")
 def browser():
-    sync_api = pytest.importorskip("playwright.sync_api")
+    if REQUIRED:
+        import playwright.sync_api as sync_api     # ImportError fails the job
+    else:
+        sync_api = pytest.importorskip("playwright.sync_api")
     with sync_api.sync_playwright() as p:
         b = _launch(p)
         if b is None:
+            if REQUIRED:
+                pytest.fail("LTN_REQUIRE_VIEWER_E2E=1 but no browser Playwright can launch")
             pytest.skip("no local Chromium-family browser for Playwright")
         yield b
         b.close()

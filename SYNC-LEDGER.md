@@ -12,7 +12,8 @@ projection of it.**
   happened.
 - Repo-only files may be edited here freely: `README.md`, `LICENSE`,
   `CHANGELOG.md`, `SYNC-LEDGER.md`, `.gitignore`, `requirements*.txt`, `docs/`,
-  `tools/` (including `tools/templates/`), `tests/`.
+  `tools/` (including `tools/templates/`), `tests/`, `pyproject.toml`,
+  `.github/`.
 
 ## Source
 

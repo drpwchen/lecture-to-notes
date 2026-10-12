@@ -1,0 +1,57 @@
+# Project metadata + tool config. The pipeline is still a folder of scripts you
+# run directly (`python scripts/<stage>.py …`); nothing here changes that.
+#
+# `pip install -r requirements.txt` remains the documented install, and the
+# requirements files keep the comments explaining each dependency. The lists
+# below must match them exactly — tests/test_packaging.py fails on any drift.
+# `pip install .` / `.[optional]` installs the same set (and no code: the
+# scripts are not a package).
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lecture-to-notes"
+version = "0.8.0"
+description = "Local-first pipeline: lecture recordings + slides -> timestamped, slide-grounded notes and a synced HTML viewer"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+dependencies = [
+    "faster-whisper>=1.0",
+    "rapidocr-onnxruntime>=1.3",
+    "Pillow>=10.0",
+    "numpy>=1.24",
+    "PyMuPDF>=1.24",
+    "ImageHash>=4.3",
+    "pyyaml>=6.0",
+    "rapidfuzz>=3.0",
+    "requests>=2.31",
+    "json-repair>=0.25",
+]
+
+[project.optional-dependencies]
+optional = [
+    "scikit-image>=0.22",
+    "pillow-heif>=0.16",
+    "psutil>=5.9",
+]
+# What tests/ needs on top of the standard library. The viewer end-to-end test
+# also wants pandoc + ffmpeg/ffprobe on PATH, and Playwright for its browser
+# half; each part skips cleanly when its tool is missing.
+test = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/drpwchen/lecture-to-notes"
+Changelog = "https://github.com/drpwchen/lecture-to-notes/blob/main/CHANGELOG.md"
+Issues = "https://github.com/drpwchen/lecture-to-notes/issues"
+
+[tool.setuptools]
+# Not a package: the scripts are run as files and import each other by path.
+packages = []
+py-modules = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

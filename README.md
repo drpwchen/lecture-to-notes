@@ -267,6 +267,7 @@ and `audit_note.py` mechanically checks it.
 | `scripts/batch/` | Generic batch layer: segment splitting, language detection, caching |
 | `scripts/layout2/` | Web viewer assets for `export_web.py` |
 | `tests/` | Dependency-light tests (`pytest`), incl. a hostile-content viewer fixture |
+| `pyproject.toml` | Metadata + test config; dependency lists mirror `requirements*.txt` |
 | `ocr_bench/` | OCR engine A/B/C harness — bring your own fixtures |
 | `data/` | Word/acronym frequency lists used to flag suspect ASR tokens |
 | `docs/AUDIT_SUMMARY.md` | What the pre-release audit found, and two things it got wrong |
