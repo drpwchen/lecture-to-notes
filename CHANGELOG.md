@@ -114,6 +114,10 @@ that need neither a Mac nor a change in how the pipeline is used).
 
 - `VIEWER_VERSION` → `layout2/2026.10.13`. Schema unchanged (still v3); old
   pages keep working, re-export to get the hardening.
+- Stage D's default ollama endpoint is `http://127.0.0.1:11434/api/generate`
+  instead of `localhost` (committed 2026-10-07, first released here): on Windows
+  `localhost` tries IPv6 first and costs about 2 s per request before falling
+  back. `OLLAMA_URL` still overrides it.
 
 ## [0.7.1] — 2026-09-01
 
