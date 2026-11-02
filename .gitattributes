@@ -1,5 +1,5 @@
-# Normalize to LF everywhere. tools/sync_from_skill.py writes LF, so a CRLF
-# checkout would make --check report every synced file as modified.
+# Normalize to LF everywhere. tools/sync_from_skill.py copies upstream bytes as-is,
+# so upstream files must be LF too, or --check reports them as modified after a checkout.
 * text=auto eol=lf
 
 # Long wordlists: don't try to diff them.

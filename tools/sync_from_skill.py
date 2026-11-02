@@ -107,6 +107,30 @@ def t_groq_asr(text: str) -> str:
     return text
 
 
+# gemini_asr: upstream falls back to a machine-local secret store for the API key.
+# Public copy: env-only key.
+_GEM_KEYFN = re.compile(r"def api_key\(\):.*?(?=\n\n\n(?:def|class) )", re.S)
+_GEM_KEYFN_NEW = (
+    'def api_key():\n'
+    '    """GEMINI_API_KEY from the environment (never printed)."""\n'
+    '    k = (os.environ.get("GEMINI_API_KEY") or "").strip()\n'
+    '    if not k:\n'
+    '        raise RuntimeError("GEMINI_API_KEY is not set: create a key at https://aistudio.google.com/apikey "\n'
+    '                           "and export it, or use --via agy")\n'
+    '    return k'
+)
+
+
+def t_gemini_asr(text: str) -> str:
+    """Env-only Gemini key."""
+    text = _sub_once(_GEM_KEYFN, _GEM_KEYFN_NEW, text, "gemini_asr api_key()")
+    if "_platform" in text or ".claude" in text:
+        raise TransformError("gemini_asr: local secret store still referenced after transform")
+    if "Terms of service" not in text:
+        raise TransformError("gemini_asr: the agy terms-of-service note is missing upstream")
+    return text
+
+
 # (2026-08-02) Five transforms retired: the private traces they stripped
 # (personal vault default in audit_note, machine-specific _paths docstring,
 # private control-plane directory names in export_web/ocr_slides/SKILL.md)
@@ -125,6 +149,17 @@ __pycache__/
 """
 
 
+_DENY: list = []   # filled by main() from the skill dir's publish-denylist.txt
+
+
+def t_wordlist(text: str) -> str:
+    """Drop wordlist entries that match the private denylist. The lists are built from a
+    local reference corpus, so a stamp printed on its pages (a download watermark) can
+    become a "word" — v0.1.0-0.8.0 shipped one such token."""
+    keep = [w for w in text.splitlines() if not any(p.search(w) for p, _ in _DENY)]
+    return "\n".join(keep) + ("\n" if text.endswith("\n") else "")
+
+
 def t_data_gitignore(_text: str) -> str:
     """The private side ignores the generated wordlists; the OSS repo tracks them."""
     return _DATA_GITIGNORE
@@ -139,12 +174,12 @@ def t_data_gitignore(_text: str) -> str:
 FILES: list[tuple[str, str, object]] = [
     # 2026-08-02: the SKILL.md/audit_note/_paths/export_web/ocr_slides transforms
     # were retired — the private traces they stripped are now fixed in the skill
-    # itself, so those files sync byte-identical. Only groq_asr (secret-store
-    # fallback removal) and data/.gitignore (track shipped wordlists) remain.
+    # itself, so those files sync byte-identical. Only groq_asr / gemini_asr
+    # (secret-store fallback removal) and data/.gitignore remain.
     ("SKILL.md", "SKILL.md", None),
     ("config.example.yaml", "config.example.yaml", None),
-    ("data/real_words.txt", "data/real_words.txt", None),
-    ("data/real_acronyms.txt", "data/real_acronyms.txt", None),
+    ("data/real_words.txt", "data/real_words.txt", t_wordlist),
+    ("data/real_acronyms.txt", "data/real_acronyms.txt", t_wordlist),
     ("data/.gitignore", "data/.gitignore", t_data_gitignore),
     # ocr_bench: harness only. fixtures/, results/, report.md and
     # fixtures_manifest.json are NOT published (they are real lecture slides and
@@ -156,6 +191,7 @@ FILES: list[tuple[str, str, object]] = [
     ("ocr_bench/adapters/paddleocr_vl_adapter.py", "ocr_bench/adapters/paddleocr_vl_adapter.py", None),
     # Transformed scripts.
     ("scripts/groq_asr.py", "scripts/groq_asr.py", t_groq_asr),
+    ("scripts/gemini_asr.py", "scripts/gemini_asr.py", t_gemini_asr),
     ("scripts/audit_note.py", "scripts/audit_note.py", None),
     ("scripts/_paths.py", "scripts/_paths.py", None),
     ("scripts/export_web.py", "scripts/export_web.py", None),
@@ -175,6 +211,8 @@ GLOBS: list[tuple[str, str, str]] = [
 NEVER = {
     "config.yaml",              # author name + machine paths
     "scripts/.gitignore",       # merged into the root .gitignore instead
+    "reference/decisions-private.md",  # run-by-run evidence: recording names, local routes
+    "publish-denylist.txt",     # name patterns for the leak scan; naming them would publish them
 }
 
 # Repo-authored files that shadow a skill file of the same path. The skill copy
@@ -182,6 +220,56 @@ NEVER = {
 OVERRIDES = {
     "ocr_bench/README.md": "tools/templates/ocr_bench_README.md",
 }
+
+
+# --------------------------------------------------------------------------
+# Leak scan
+# --------------------------------------------------------------------------
+# Runs on EVERY published payload, after transforms. A byte-identical copy is
+# only as clean as its upstream; this is the backstop for the next machine-local
+# path or helper someone adds upstream. Patterns are shapes, not names, so the
+# list itself publishes nothing private. A hit aborts the sync.
+LEAK_PATTERNS = [
+    (re.compile(r"[A-Za-z]:[/\\]+Users[/\\]"), "absolute Windows user path"),
+    (re.compile(r"/mnt/[a-z]/Users/"), "WSL path into a Windows user dir"),
+    (re.compile(r"/home/[a-z][\w.-]*/"), "absolute Linux home path"),
+    (re.compile(r"/Users/[A-Za-z][\w.-]*/"), "absolute macOS home path"),
+    (re.compile(r"\b_platform\b"), "machine-local secret helper module"),
+    (re.compile(r"\.claude[/\\]hooks"), "private hooks directory"),
+    (re.compile(r"\bsecret\(\s*[\"']"), "local secret-store lookup"),
+    (re.compile(r"(?:[/\\]{2}|\\\\)nas[/\\]", re.I), "NAS share path"),
+]
+
+
+DENYLIST_NAME = "publish-denylist.txt"   # in the SKILL dir, never published (see NEVER)
+
+
+def load_denylist(skill_dir: Path) -> list:
+    """Extra, name-shaped patterns (private repo / folder / event names) kept next to the
+    private source so the public tool never has to spell them out. One regex per line,
+    `#` comments. Absent file = shapes only."""
+    f = skill_dir / DENYLIST_NAME
+    if not f.is_file():
+        return []
+    out = []
+    for line in f.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            out.append((re.compile(line, re.I), f"denylisted name (pattern #{len(out) + 1} of {DENYLIST_NAME})"))
+    return out
+
+
+def leak_scan(rel: str, payload: bytes, extra: list | None = None) -> list[str]:
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return []
+    hits = []
+    for pat, why in LEAK_PATTERNS + (extra or []):
+        for m in pat.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            hits.append(f"{rel}:{line}: {why}")
+    return hits
 
 
 def collect(skill_dir: Path) -> list[tuple[Path, Path, object]]:
@@ -242,9 +330,16 @@ def main() -> int:
     jobs = collect(skill_dir)
     changed, created, same = [], [], 0
 
+    leaks, deny = [], load_denylist(skill_dir)
+    _DENY[:] = deny
     for src, dst, fn in jobs:
         if not src.is_file():
             raise SystemExit(f"manifest names a file that does not exist: {src}")
+        leaks += leak_scan(dst.relative_to(REPO).as_posix(), render(src, fn), deny)
+    if leaks:
+        raise SystemExit("LEAK SCAN FAILED — nothing written:\n  " + "\n  ".join(leaks))
+
+    for src, dst, fn in jobs:
         payload = render(src, fn)
         rel = dst.relative_to(REPO).as_posix()
         if not dst.exists():
