@@ -17,6 +17,7 @@ thing it is about, or when you want to relitigate a decision.
 - [8 GB VRAM budget](#vram)
 - [Batch size and beam width](#batch-beam)
 - [Dual-model transcription](#dual-model)
+- [Far-field hall recordings — second source, not filters](#far-field-hall)
 - [Frame timestamp off-by-one](#frame-timestamp-offset)
 - [OCR engine benchmark — Surya chosen](#ocr-benchmark)
 - [The slim VLM prompt](#slim-vlm-prompt)
@@ -98,6 +99,27 @@ filling, and the VAD upgrade path.
 ==This is why the `transcript.partial.json` write must not be removed== — the
 chunked runner is its external consumer, and deleting it breaks crash-resume.
 
+**2026-10 — the exit path, not the decode.** The 08-02 `del model;
+gc.collect()` ran the CT2+CUDA destructor *before* `os._exit`, so transcribe
+still died with 0xC0000409 at the very end: the transcript was on disk but
+`stage_done`/runs.jsonl were not, and the collapse-retry child (same
+destructor) crashed too — 3 of 4 jobs on 10/03. Fix: ==never destroy a CT2
+model in-process==. Models live in a module-level keepalive
+(`_KEEPALIVE` / retranscribe `_MODEL_CACHE`), every exit is `os._exit`. The
+default path is a thin parent that never imports CT2 and runs the decode as a
+`--decode-only` child; the child writes transcript → stage_done → runs.jsonl →
+`.transcribe_handoff.json`, then `os._exit`s. The parent trusts the handoff even
+if the child's exit code is bad, and starts the collapse retry only after the
+child is gone (VRAM freed), so two Whisper models never share the 8 GB card.
+The OOM fallback obeys the same rule: it used to `del model; gc.collect()`
+between batch sizes (and after a failed sequential try), i.e. the same
+destructor mid-process. Now each decode child runs ONE attempt of the plan
+(batch sizes…, then sequential); an OOM with a smaller attempt left parks the
+model and exits `OOM_RETRY_RC`=75 after writing `.transcribe_handoff.json.oom`,
+and the parent relaunches with `--attempt next` — the OS, not the destructor,
+returns the VRAM. A last-attempt failure writes `stage_done(success=False)` and
+exits 2 via `os._exit`. Verified by GPU fault injection.
+
 ## Crash reality — the audio, not the VRAM {#crash-reality}
 
 Measured on a two-day workshop batch (2026-07-25): two independent 2-hour
@@ -167,13 +189,19 @@ faster than batch 4 / beam 10 (250 s) at the same quality. Batch 3 / beam 5
 (114 s) loses ~5 % of transcript detail. Batch 3 / beam 15 (418 s) is 2× slower
 and ==introduces typos== (因據 for 依據) — not worth it.
 
-So `--batch-size 3 --beam-size 10` is the recommended production invocation.
-==The script's own defaults are different and that is deliberate==: argparse
-defaults to `--batch-size 4 --beam-size 5`, and batching only engages when
-`--vad` is also passed (the batched pipeline requires `vad_filter=True`, and VAD
-has been off by default since 2026-07-12 because it was eating quiet speech). So
-a bare invocation runs sequential at beam 5; pass the flags explicitly for the
-measured configuration.
+==SUPERSEDED 2026-07-12 (recorded 2026-10-20).== The n=15 sweep
+(the asr-benchmark n=15 write-up) replaced this n=1 result: beam 10
+captured 604 real terms vs 649 at the default beam 5, at 1.7× GPU time. And with
+VAD off by default, batching never engages, so `--batch-size` does nothing on a
+normal run. ==The production invocation is the bare defaults== (`--lang <x>` only:
+breeze25, beam 5, VAD off, conditioning off) — for English as well, where breeze25
+ties large-v3. The numbers above are kept as memory ceilings for the anti-collapse
+retry. 2026-10-20 a batch still copied `--beam-size 10 --initial-prompt` from an old
+run script; `transcribe_video.py` now prints a WARNING on any first-pass deviation.
+
+Original 2026-05-22 note: `--batch-size 3 --beam-size 10` was the recommended
+invocation; argparse defaults to `--batch-size 4 --beam-size 5`, and batching only
+engages when `--vad` is also passed.
 
 Batch size was lowered from 8 to 4 on 2026-05-21 after three lectures in one
 conference batch showed transcribe peaks above 7900 MiB on English audio. On CUDA
@@ -205,6 +233,102 @@ Cost: about +3 min of GPU per hour of audio; ==`breeze25` is the same speed as
 
 Merging two transcripts is not implemented inside this skill; the reconciliation
 tooling lives with the general transcription workflow.
+
+## Far-field hall recordings — second source, not filters {#far-field-hall}
+
+**2026-10-23/24, an international conference hall.** Audience-seat recordings of a PA system,
+non-native speakers. Ruler: 6 clips × 3–5 min, 78 reference terms/numbers taken from slide photos
+and published trials; no human transcript, so n is small.
+
+| system | hits /78 | leftover mishearings |
+|---|---|---|
+| breeze25 bare default | 42 (54 %) | 22 |
+| any pre-processing (band-pass, afftdn, loudnorm, WPE) | 40–44 | 15–19 |
+| large-v3 | 47 | 17 |
+| Qwen3-ASR-1.7B | 40 | 3 |
+| LLM merge of breeze25 + large-v3 + Qwen (changes marked `[[old -> new]]`) | 51 (65 %) | 3 |
+| gemini-3.8-flash, plain verbatim prompt (online) | 64 (82 %) | 0 |
+
+- Filters do nothing: what the room's reverb and PA lose cannot be filtered back.
+- Single-model numbers are fragile: large-v3 gave one sensitivity figure as 58 % on a 3-min clip and
+  150 % on the full recording — only the 30-s window boundaries had moved.
+- Gemini: two runs gave identical scores; 107/111 sentences are supported by some local ASR.
+  The one number that differed between its runs (10 % vs 20 %) is why single-source numbers stay
+  unconfirmed. Free-tier key: Pro models return 429; Flash ~1× real time with 503 retries.
+
+**2026-10-24 follow-up — course recordings, three source types, 9 systems.** 15 × 4-min clips from
+already-delivered lectures (5 English lectures, 5 Taiwanese Mandarin-English lectures, 5 noisy
+hands-on workshops); blind reference lists (356 items) written by agents from all versions relabelled
+A–I.
+
+| system | English | zh-en | hands-on | far-field hall /78 |
+|---|---|---|---|---|
+| gemini-3.8-flash (API or Antigravity CLI — equivalent text) | 98 % | 97 % | 98–100 % | 82 % |
+| Qwen3-ASR-1.7B | 83 % | 76 % | 64 % | 51 % |
+| VibeVoice-ASR 8B (4-bit) | 77 % | 76 % | 47 % | 24 % (repetition loops) |
+| breeze25 (default) | 85 % | 70 % | 60 % | 54 % |
+| large-v3 | 85 % | 61 % | 49 % | 60 % |
+| Fun-ASR-Nano / FireRedASR2-AED / SenseVoice | 51–72 % | 30–57 % | 31–44 % | 33–46 % |
+
+- No local model comes close to Gemini on any source type; the gap holds after removing items that
+  only the two Gemini versions supported (they are the same model, so not independent votes).
+- Chinese-made models (SenseVoice, Fun-ASR, FireRed) fail on Taiwanese code-switching
+  (bicep tendon → "bicycle panda") and output ~30 % simplified characters; so do Qwen and large-v3
+  in zh mode. breeze25 and Gemini stay Traditional.
+- Among local models, Qwen3-ASR is best on zh-en and hands-on, breeze25 ≈ large-v3 on English.
+- The Antigravity CLI route gives the same text as the API, but its raw clock stretches: a 4-min
+  clip's last stamp lands at 4:40–6:20, i.e. the error grows with time, not random jitter.
+  **Fixed by re-anchoring, not by prompting**: `scripts/ts_anchor.py` aligns the Gemini text to the
+  local transcript character by character (difflib, runs ≥ 4 chars, CJK + latin) and takes the local
+  clock; `gemini_asr.py` does it per chunk by default. Offset vs large-v3 (median / p90):
+
+  | | 15 course clips (en words) | zh/hands-on (CJK bigrams) | hall 10-min chunks |
+  |---|---|---|---|
+  | CLI raw | +12 s / p90 44 s | +11 / 56 | +61 / 140 |
+  | CLI linear rescale to clip length | 0 / 13 | +0.5 / 6 | — |
+  | CLI anchored | 0 / 11 | 0 / 5 | +3 / 17 |
+  | API raw | +1 / 12 | +1 / 5 | +3 / 21 |
+  | breeze25 (floor of the ruler) | +2 / 10 | +1 / 5 | Qwen +1 / 11 |
+
+  Anchored lines: 83–100 % per clip (unanchored ones are interpolated between neighbours). A chunk
+  with < 50 % anchored is linearly rescaled into the chunk instead (sparse anchors from a hallucinating
+  small model were worse than none: p90 102 s at 17 % coverage) and says so in the log.
+
+## Gemini primary, breeze25 as the clock and cross-check {#gemini-primary}
+
+Gemini is the transcript; a local model supplies timestamps and a second source to check against.
+(Run-by-run evidence with recording names lives in a local `decisions-private.md` where one exists.)
+
+- Anchor model (faster-whisper; the anchor lends its clock, its words may be wrong): breeze25 ~10×
+  realtime, p90 11 s／5 s; large-v3-turbo GPU 56×, 11 s／4 s; small GPU hallucinates on hands-on audio
+  (17 % coverage, p90 102 s before the rescale fix); tiny CPU int8 22×, but 6–10 % coverage on noisy
+  workshops. Default is breeze25 because the anchor is also what a writer checks Gemini's names and
+  numbers against, and turbo's words are too poor for that (31 % term coverage on a workshop clip vs
+  breeze25 83 %). Cost ~+5 min GPU per hour of audio. `--anchor-model turbo` stays for clock-only runs.
+- Blocked chunks ("blocked by Gemini's filters", seen on medical talks) are transcribed by breeze25 for
+  the refused range only — the best Traditional-Chinese local model (Qwen3-ASR scores higher on zh-en
+  but writes ~30 % simplified).
+- Gemini Flash Low/Medium/High differ within rerun noise on the 78-item hall set.
+- A whole 44-min zh-en lecture (5 chunks): 1.00–1.09× breeze25's character count in every 5-min
+  window — no skipped or summarised parts.
+- Other cloud ASR (ElevenLabs, Deepgram, MAI-Transcribe, gpt-4o-transcribe…) were not tested.
+- Silent failures found on full-course runs, all handled in `gemini_asr.py`:
+  1. whole chunk on one line with inline `[mm:ss]` → 10-min "sentences" → split at inline stamps;
+  2. Gemini stops mid-chunk without an error (3 of 87 chunks lost 3–9 min; one chunk began 3 min
+     late) → gap check against the local clock (≥ 90 s of local speech, no Gemini line) → re-ask Gemini
+     for that range, breeze25 only if that fails — all 3 recovered by the retry;
+  3. a fixed 200-char minimum rejected every short tail chunk → minimum scaled to the range length;
+  4. repetition loop (1 of 44 chunks in a 9-clip zh course): after the real end of a session Gemini
+     cycled four short lines ("謝謝。辛苦了。謝謝大家。好。") for 514 lines, stamps running to 29:16 of a
+     10:00 chunk; the gap check is blind to it (the range has lines). Detector `find_loop`: any 30-line
+     window with distinct/30 < 0.3 (that chunk 0.13; the 43 clean ones ≥ 0.63 — wide margin, but one
+     course). Hit → part kept as `.part.loop`, whole chunk resent once; still looping → lines from the
+     loop start dropped, gap check handles the range.
+- Content errors the note writers found (keep the local transcript beside Gemini's for this): name
+  swaps, a term swapped for another real term, numbers that conflict with the slide (80 controls →
+  "18"; 2010–2018 → "2017–2018"), a phrase replaced by a plausible one, and dropped self-introductions.
+  The same number can differ between Gemini runs (10 % vs 20 %). Slides > Gemini + one local > Gemini
+  alone.
 
 ## Frame timestamp off-by-one {#frame-timestamp-offset}
 
@@ -502,3 +626,39 @@ The recurring meta-lesson across the entries above, stated once:
    as "nothing wrong". When a comparison can come up empty, the empty case needs
    its own branch; falling through to the success path is how a checker becomes
    decorative.
+
+## Stage D on ultrasound demo footage — measured worthless, retired for that corpus {#vlm-ultrasound}
+
+2026-09-07, a 74.6 h batch of Taiwanese PM&R course recordings. ==This is a
+measurement on one corpus, not a change to HARD RULE 2.== Stage D stays mandatory by
+default; what follows is the evidence for switching it off on a specific kind of footage.
+
+**What the VLM returned.** On a 48-min ultrasound lecture, `minicpm-v:8b` gave every
+sonographic frame signals of this shape:
+
+```json
+"visible_labels": ["Ultrasound image", "Red dot indicating area of interest"],
+"visual_complexity": 0.25, "contains_clinical_imaging": true
+```
+
+It never named the structure, the plane, or the nerve — the only things that would have
+fed tier scoring usefully. The pre-skip gate does not help here: those frames are neither
+low-entropy nor decorative, so all 127 canonical slides of that clip were sent.
+
+**What it cost.** 631 s of 1479 s for that course — ==~43% of GPU wall time== (clip c02
+140 s, c03 491 s ≈ 3.9 s/slide). Across the batch's 43.2 h of non-dynamic material that
+projects to 5–7 GPU-hours.
+
+**Decision.** That batch's driver (not shipped) defaults `do_vlm=False` (`--vlm` to re-enable). The
+semantic read is carried by Stage F instead — the L3 agent already sees the same frames
+in `Step 5 — L3 image cross-check`, and sees them ==with transcript context==, which is
+what actually identifies a sonogram. Queue estimate fell from ~21 h to ~16 h.
+
+**Reversible by design.** Stage E only reads `slides_vlm.json`; re-running
+`vlm_signals.py` → `ground_slides.py` → `build_L1.py` on any one course costs seconds.
+
+**Where this generalizes.** The distinguishing feature is not "ultrasound" but ==whether
+an 8B VLM can name what is on the frame==. Diagram- and text-slide courses were not
+measured and Stage D should stay on for them. Before switching it off for a new corpus,
+read ten `vlm_signals` blocks and ask whether any of them says something the transcript
+plus `quick_text` does not already say.

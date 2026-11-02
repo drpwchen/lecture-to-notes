@@ -307,3 +307,17 @@ export:
   # Name printed in the exported page footer ("<author> 設計 · viewer …").
   # Blank (the default) omits the footer entirely. Override per run with --author.
   author: ""
+  # Helper script that sends one path to the Recycle Bin / Trash (used when export_web retires
+  # a verified remux original). Blank = use the send2trash package if installed, else keep originals.
+  recycle_helper: ""
+  # Retire a remux original whose audio had to be transcoded to AAC (LPCM / AC-3 sources), where
+  # only the duration can be compared. Off = keep such originals. Video is always packet-compared.
+  retire_transcoded_audio: false
+
+# ---------------------------------------------------------------------------
+# gemini_asr.py
+# ---------------------------------------------------------------------------
+gemini:
+  # --via default: api (REST API, GEMINI_API_KEY) or agy (Antigravity CLI headless -
+  # read the terms-of-service note in scripts/gemini_asr.py first). Env LECTURE_GEMINI_VIA wins.
+  via: api

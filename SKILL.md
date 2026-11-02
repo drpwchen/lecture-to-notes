@@ -41,7 +41,8 @@ page is the map; detail lives in `reference/`, one topic per file.
    8 GB card, and frame extraction must not run alongside transcription.
 7. ==On an 8 GB card, never exceed `--batch-size 4` with `--beam-size 10`==, and
    never combine `--beam-size 15` with sequential mode — that crashes
-   (`0xC0000005`). The measured sweet spot is `--batch-size 3 --beam-size 10`.
+   (`0xC0000005`). These are memory ceilings for the anti-collapse retry, ==not a
+   recommended first pass== — first pass is the bare defaults (Step 4).
 8. ==Director batch dispatch==: for a multi-lecture batch, dispatch Steps 1–9 as
    one subagent and Step 10 synthesis as a separate fresh subagent, spawned only
    after `slides_grounded.json` exists. A single subagent bounces during the long
@@ -124,14 +125,60 @@ and proceed, `2` blocked — surface it, ==do not retry in a loop==. A card whos
 
 ```bash
 python <skill-dir>/scripts/transcribe_video.py "<media>" \
-    --output-dir "$OUT_DIR" --lang <zh|en|bilingual|auto> \
-    --batch-size 3 --beam-size 10
+    --output-dir "$OUT_DIR" --lang <zh|en|bilingual|auto>
 ```
+==Bare defaults ARE the production config== (asr-benchmark 2026-07-12 n=15,
+`breeze25 / novad_nocond`: breeze25, beam 5, VAD off, conditioning off) — ==for
+English too==: breeze25 ties large-v3 on English audio, so do not switch models.
+Do not add `--beam-size 10` (loses recall, 1.7× time), `--initial-prompt` (invents
+near-miss words) or `--model large-v3` on a first pass, and ==do not copy flags
+from an older batch's run script==; the script prints a WARNING when you do.
+Those flags belong only in the anti-collapse retry recipe.
 Local faster-whisper by default; `--engine groq` is an optional offload (HARD
 RULE 9). Default model alias is `breeze25` (needs a local model dir); on a
 machine without one, pass `--model large-v3`, which faster-whisper downloads.
 Recordings over ~30 min go through the chunked runner instead.
 → `reference/pipeline.md#transcription`
+
+**Gemini as the primary transcript** (measured 2026-10-24: Gemini 97–100 % vs best local 64–85 %
+on 15 course clips in 3 categories, 82 % vs 54–60 % on far-field hall audio). Allowed only where the
+recording is non-PHI (HARD RULE 10) and ==the user has said yes to sending it out== — a project may
+record a standing yes in its own AGENTS.md; everywhere else ask per recording, and without a yes run
+the bare default above.
+```bash
+python <skill-dir>/scripts/asr_gemini_primary.py "<media>" -o "$OUT_DIR" --lang <zh|en|bilingual> \
+    [--start <ISO wall clock>] [--extra <args for the breeze25 fallback>]
+```
+1. `--model breeze25` (bare default, ~10× realtime) → `transcript_anchor.{txt,json}` — the clock ==and the
+   cross-check==: Gemini swaps names／terms and contradicts slides now and then, so a writer checks names
+   and numbers against this file. `--anchor-model turbo` (beam 1, ~56×) clocks as well but its words
+   are too poor to check against — use it only when speed matters more.
+2. `scripts/gemini_asr.py` sends 10-min chunks to Gemini (`--via api` = REST API key; `--via agy` =
+   the Antigravity CLI in headless mode — ==read the terms-of-service note in its docstring first==)
+   and re-anchors every line to the local clock (`ts_anchor.py`; a chunk < 50 % anchored is linearly
+   rescaled instead). It also catches Gemini's silent failures: a chunk cut short (gap check against
+   the local clock) and a repetition loop (resend, then drop the looping lines).
+3. Chunks Gemini's filter refuses on every route ("blocked by Gemini's filters" — happens on medical
+   talks) are transcribed by ==breeze25 for that chunk's range only== (`--fill-blocked breeze25`,
+   cached in `*.part.fill`).
+4. The result becomes `transcript.json`／`transcript.txt` (each JSON line has `source`: `gemini` |
+   `breeze25`), so split_segments／build_L1／audit_note run unchanged; `transcript_source.json` records
+   the path. Gemini failing outright (quota, network) → plain breeze25 for the whole file (old path).
+
+HARD RULE 3 still holds: Gemini is a different ASR source, not a correction pass — never edit its
+lines. Gemini is an LLM, so a number only it has (no slide, no second source) stays unconfirmed in
+the note. `gemini_asr.py` alone (with `--anchor`, no fill) remains the way to add Gemini as a
+==second== source next to an existing breeze25 transcript (e.g. old courses, far-field halls).
+→ `reference/decisions.md#gemini-primary`, `#far-field-hall`.
+
+**Far-field hall recordings** (audience seat, PA system, non-native speakers):
+- Where sending audio out is allowed: add Gemini as a source (above) — 82 % vs 54–60 % term hits.
+- Otherwise (offline): also run `--model large-v3` and Qwen3-ASR-1.7B, and give the writer
+  all versions (65 % hits, mishearings 22 → 3).
+- Either way, ==a number found in only one source is unconfirmed== until a slide or a second
+  source agrees — the same model gave 58 % vs 150 % for one figure across two runs.
+Audio pre-processing (band-pass, denoise, loudnorm, WPE) measured flat — don't.
+→ `reference/decisions.md#far-field-hall`
 
 ### Step 5 — Stage A: frame extraction (Path A only)
 
@@ -333,7 +380,7 @@ rather than less output (`reference/decisions.md#optional-dependency-degradation
 ├── ocr_bench/  engine benchmark harness (bring your own fixtures)
 └── scripts/
     ├── route_inputs.py           front door — classifies material, prints the plan
-    ├── transcribe_video.py  retranscribe_segment.py  gpu_check.py  groq_asr.py
+    ├── transcribe_video.py  retranscribe_segment.py  gpu_check.py  groq_asr.py  gemini_asr.py
     ├── extract_slides.py  quick_ocr.py  dedup_semantic.py  ocr_surya.py
     ├── vlm_signals.py            (ocr_slides.py = deprecated shim → here)
     ├── build_slides_from_pdf.py  build_slides_from_images.py  crop_multiup_pdf.py

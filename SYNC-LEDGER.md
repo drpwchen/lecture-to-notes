@@ -41,6 +41,8 @@ publishes the next private file somebody drops into the tree.
 | `ocr_bench/fixtures/`, `fixtures_manifest.json` | real lecture slides — third-party content, not ours to distribute |
 | `ocr_bench/results/`, `ocr_bench/report.md` | benchmark numbers from one machine; also embed fixture text |
 | `scripts/.gitignore` | merged into the root `.gitignore` instead |
+| `publish-denylist.txt` | name patterns for the leak scan — publishing them would publish the names |
+| `reference/decisions-private.md` | run-by-run evidence behind `decisions.md#far-field-hall` / `#gemini-primary`: recording names and local paths. The public `decisions.md` carries the neutral summary. |
 | `__pycache__/`, `*.pyc` | build artifacts |
 
 ## Transforms applied at export
@@ -51,12 +53,10 @@ private version must never reach this repo by accident.
 
 | File | Transform | Why |
 |---|---|---|
-| `SKILL.md` | The optional-infrastructure table row naming a private course control-plane directory reworded to describe it generically. | De-identification. The name survives in `reference/segmented-mode.md`, where the whole point of the passage is documenting that external control plane. |
 | `scripts/groq_asr.py` | Local encrypted secret-store fallback removed; `GROQ_API_KEY` read from the environment only. The actionable `RuntimeError` is kept. Module header reworded. | The fallback shells out to a helper that exists on exactly one machine. Env-only is the portable contract. |
-| `scripts/audit_note.py` | `--vault` default changed from a hardcoded personal vault path to `$CLAUDE_VAULT_ROOT` (empty when unset). | Absolute-path de-identification. |
-| `scripts/_paths.py` | Module docstring rewritten. | The original described the private machine it was extracted from, by name, plus an unrelated private hook config. |
-| `scripts/export_web.py` | Comment naming a private course control plane reworded to describe the manifest field generically. | De-identification; the field itself is generic. |
-| `scripts/ocr_slides.py` | Same — the deprecation shim's comment named private callers. | De-identification. |
+| `scripts/gemini_asr.py` | `api_key()` reads `GEMINI_API_KEY` from the environment only (upstream falls back to a machine-local secret store). Everything else, including the `agy` route and its terms-of-service note, ships unchanged; the transform aborts if that note is missing upstream. | Same portability contract as `groq_asr.py`. |
+| `data/real_words.txt`, `data/real_acronyms.txt` | Entries matching the private denylist are dropped. | The lists are built from a local corpus; a page watermark once became a "word". |
+| *(every file)* | Leak scan after transforms: absolute user paths, WSL/NAS paths, `_platform`, `.claude/hooks`, `secret("…")`, plus the denylist (`publish-denylist.txt` in the skill dir, itself never published). A hit aborts the sync with nothing written. | Byte-identical copies are only as clean as upstream; this is the backstop. |
 | `data/.gitignore` | Replaced. Upstream ignores the generated wordlists; this repo **tracks** them. | Deliberate call: they are dictionary-word frequency lists compiled from a local reference corpus, and `flag_asr_suspects.py` is unusable without them. |
 | `ocr_bench/README.md` | Fully replaced by `tools/templates/ocr_bench_README.md`. | The upstream README documents the private fixture set and machine-specific venv paths. The replacement documents the fixture format so users can bring their own. |
 
@@ -74,10 +74,6 @@ likely a fix lands in only one of them.
   fixtures and no manifest it exits with a `FileNotFoundError`. This is
   documented in `ocr_bench/README.md` rather than patched, to keep the file
   byte-identical with upstream.
-- The five transforms that exist purely for de-identification
-  (`SKILL.md`, `audit_note.py`, `_paths.py`, `export_web.py`, `ocr_slides.py`)
-  would be better fixed upstream — then they could be dropped here and those
-  files would be byte-identical too. Worth doing on the next upstream pass.
 
 ## History
 
@@ -87,4 +83,5 @@ likely a fix lands in only one of them.
 | 2026-08-05 | v0.6.0 real-timeline pass. 60 entries: 3 created (`_mdpm.py`, `batch/course_timeline.py`, `batch/audit_segmentation.py`), 7 updated. ==De-identification was done UPSTREAM this time==: the new docs and code comments originally named a real conference and four real speakers, and were rewritten in the skill itself to `Conference-Y` / `<speaker>` before syncing, so no new transform was needed. That is the direction this ledger recommends above — keep doing it that way. |
 | 2026-09-01 | v0.7.1 small-GPU handling. 60 entries, 9 updated. Trigger: a user with a 2 GB card read `gpu_check` "blocked" as a broken machine. Edited upstream (`gpu_check.py`, `transcribe_video.py`, `retranscribe_segment.py`, `SKILL.md`, `reference/pipeline.md`) then synced; the sync also carried the 2026-08-10 `gpu_lease_ctx` refactor (no-op off this machine) and the 2026-08-25 `build_L1.py` deck-text change, both logged in the CHANGELOG. Name sweep of the full diff: clean. |
 | 2026-10-13 | v0.8.0 viewer hardening (issue #1). ==Edited in this repo first, against the standing rule==, because the work was scoped to the public repo: `scripts/export_web.py`, `scripts/layout2/viewer.js`, the new `scripts/_html_safety.py`, and `scripts/route_inputs.py` (structured plan). Same situation for the 2026-10-07 `scripts/vlm_signals.py` change (ollama `localhost` → `127.0.0.1`), also made here only; the port patch covers it. The same change is prepared as a patch against the upstream skill; ==apply it upstream before the next sync==, or the sync silently reverts the hardening (`_html_safety.py` would survive — the glob never deletes — but `export_web.py`/`viewer.js` would not). Upstream had also drifted ahead on 11 synced files before this change; those are not part of 0.8.0. |
+| 2026-11-02 | v0.9.0 Gemini transcription. 65 entries: 4 created (`gemini_asr.py`, `asr_gemini_primary.py`, `ts_anchor.py`, `test_ct2_teardown.py`), the rest updated. Private evidence split upstream into `reference/decisions-private.md` (NEVER); new `gemini_asr` transform (env-only key); the 0.8.0 port patch was applied upstream first. New: leak scan on every payload + private `publish-denylist.txt`; it caught a watermark token in `data/real_words.txt` shipped since 0.1.0 (now filtered). Reviewed by three independent model reviews before release. |
 | 2026-08-07 | v0.7.0 timecode parser. 60 entries, 2 updated (`export_web.py`, `batch/split_L1_by_segment.py`). De-identification upstream again, and this time the sweep also caught a **pre-existing** leak that predates this change: a real speaker name sitting in `split_L1_by_segment.py`'s module docstring since 2026-07-24, already public. ==Grep the whole repo for real names on every sync, not just the files you touched== — the per-change check would never have found it. |

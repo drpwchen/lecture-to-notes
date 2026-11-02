@@ -119,12 +119,25 @@ OCR 兩階段（RapidOCR 快篩 → Surya 精讀）、本地 VLM 判讀投影片
     Groq 的 `whisper-large-v3-turbo`（免費層可用；25 MB 上限自動分段），
     回傳格式與本機路徑完全相容。先讀它的 docstring：雲端版對中英混講的
     防崩潰參數全都沒有，而且音訊會離開你的電腦——機密錄音別走這條。
+  - **轉錄外包給 Gemini**——`scripts/asr_gemini_primary.py` 以 Gemini 為主文字，
+    本機 breeze25 只負責時間軸、兼當核對人名數字的第二來源（Gemini 是 LLM，會換人名、
+    偶爾和投影片矛盾）。15 段課程片段 Gemini 命中 97–100 % 參考術語，最好的本機模型
+    64–85 %（依類別）；遠場會場錄音 82 % 對 54–60 %。兩條路線由 `gemini_asr.py --via` 決定：
+    - `api`（預設）——用 `GEMINI_API_KEY` 打 REST API，費用記在那把 key。
+    - `agy`——Antigravity CLI 的 headless 模式（僅限 Windows＋WSL Ubuntu），用登入那個 Google 帳號的額度。
+      **先讀 `gemini_asr.py` 裡的服務條款說明。**依 Google AI Developers Forum
+      （2026-10-16）轉述的官方 FAQ：consumer 方案（含 Pro）在第三方 coding agent 裡
+      跑 headless `agy` 不受支援，即使是以本機子程序呼叫官方 binary 也一樣，可能被停權；
+      直接寫的 script 與 CI 則被描述為可以。AI agent 啟動的 script 算不算「直接」
+      沒有定論。請自行確認最新 FAQ；有疑慮就用 `api`。
+    兩條路線音訊都會離開你的電腦——機密錄音別走。
   - **Apple Silicon** 理論上以 CPU 模式可行（faster-whisper 走 CPU、
     ollama 原生支援 macOS）——合理但未實測，歡迎回報。
 - 選配：ollama + `minicpm-v:8b`（Stage D）、獨立 venv 的 Surya（高品質 OCR）、
   pandoc（網頁／PDF 匯出）。
 - 8GB 顯卡上 GPU 階段必須序列化：Whisper 和 VLM 不能同時跑，抽幀也不能和轉錄
-  搶卡。轉錄實測甜蜜點是 `--batch-size 3 --beam-size 10`。
+  搶卡。轉錄直接用預設值（只給 `--lang`）：n=15 實測 `--beam-size 10` 召回率反而下降、
+  時間 1.7 倍；加大 beam／batch 只用在防崩潰重跑。
 
 ## 快速開始
 

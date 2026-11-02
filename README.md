@@ -84,7 +84,10 @@ between them.
 
 The signature output. `export_web.py` builds a **single self-contained HTML
 page** per course where the video, the timestamped transcript, and the curated
-summary notes are presented **together and kept in sync both ways**:
+summary notes are presented **together and kept in sync both ways**
+(it also moves each referenced clip into the page's `媒體/影片/` folder — a rename
+on the same volume — and rewrites `manifest.json` to match, keeping a `.bak`; pass
+`--media-in-place` to leave clips where they are):
 
 - **Video → notes**: as the video plays, the matching note bullet
   auto-highlights and scrolls into view.
@@ -184,6 +187,26 @@ Honest version:
     segment format as the local path. Read its docstring first: hosted Whisper
     has no anti-collapse knobs for heavily code-switched audio, and anything
     you send leaves your machine — don't route confidential recordings there.
+  - **Offload transcription to Gemini** — `scripts/asr_gemini_primary.py`
+    makes Gemini the transcript and keeps a local breeze25 pass as the clock
+    and as a second source to check names and numbers against (Gemini is an
+    LLM: it swaps names and occasionally contradicts a slide). On 15 course
+    clips Gemini hit 97–100 % of reference terms vs 64–85 % for the best local
+    model per category; on far-field hall audio 82 % vs 54–60 %. Two routes, set by
+    `gemini_asr.py --via`:
+    - `api` (default) — REST API with `GEMINI_API_KEY`; usage is billed to
+      that key.
+    - `agy` — the Antigravity CLI in headless mode (Windows + WSL Ubuntu only),
+      on the quota of the Google account it is signed into. **Read the terms-of-service note in
+      `gemini_asr.py` first.** As relayed on the Google AI Developers Forum
+      (2026-10-16), Google's FAQ says headless `agy` inside third-party coding
+      agents is not supported on consumer plans (including Pro), even when
+      the official binary is called as a local subprocess, and can lead to
+      account suspension; direct scripts and CI are described as allowed.
+      Whether a script that an AI agent launches counts as "direct" is not
+      settled. Check the current FAQ; if in doubt, use `api`.
+    Audio leaves your machine on both routes — non-confidential recordings
+    only.
   - **Apple Silicon** should work in CPU mode (faster-whisper on CPU, ollama
     is native on macOS) — plausible but untested; reports welcome.
 - **`ffmpeg` and `ffprobe` on PATH** — not optional.
@@ -192,9 +215,10 @@ Honest version:
   for high-quality OCR; `pandoc` for the web/PDF export.
 
 On an 8 GB card, GPU stages must be serialized — Whisper and the VLM cannot run
-concurrently, and frame extraction must not run during transcription. The
-measured sweet spot for transcription is `--batch-size 3 --beam-size 10`;
-`--beam-size 15` with sequential mode crashes.
+concurrently, and frame extraction must not run during transcription. Run
+transcription with its bare defaults (`--lang` only): an n=15 sweep found
+`--beam-size 10` lost recall at 1.7× the time. Larger beams/batches are for the
+anti-collapse retry only, and `--beam-size 15` with sequential mode crashes.
 
 ## Quickstart
 
@@ -224,8 +248,7 @@ start without `--lang`:
 
 ```bash
 python scripts/transcribe_video.py "lecture.mp4" \
-    --output-dir "$OUT_DIR" --lang <zh|en|bilingual|auto> \
-    --batch-size 3 --beam-size 10
+    --output-dir "$OUT_DIR" --lang <zh|en|bilingual|auto>
 ```
 
 That is deliberate. There is no default language, because guessing wrong makes

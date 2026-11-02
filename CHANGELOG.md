@@ -3,6 +3,84 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-11-02
+
+### Added
+
+- **Gemini transcription** (`scripts/gemini_asr.py`, `scripts/asr_gemini_primary.py`,
+  `scripts/ts_anchor.py`). Gemini as the primary transcript, with a local breeze25
+  pass kept as the clock and as a second source for checking names and numbers;
+  or Gemini as an extra source next to an existing local transcript (far-field hall
+  recordings). Measured: 97–100 % of reference terms on 15 course clips vs 64–85 %
+  for the best local model per category; 82 % vs 54–60 % on far-field hall audio
+  (`reference/decisions.md#far-field-hall`, `#gemini-primary`).
+  - Two routes: `--via api` (`GEMINI_API_KEY` from the environment) and `--via agy`
+    (Antigravity CLI headless; Windows + WSL Ubuntu only). Default `api`; override with
+    `--via`, env `LECTURE_GEMINI_VIA` or `gemini.via` in `config.yaml`
+    (`asr_gemini_primary.py` passes `--via` through). **Read the terms-of-service note in the
+    module docstring before using `agy` on a consumer plan** — Google's FAQ, as
+    relayed on its developer forum, says headless `agy` inside third-party coding
+    agents is not supported on consumer plans and can lead to suspension.
+  - Every chunk is re-anchored to the local clock (the CLI route's raw timestamps
+    stretch: p90 44 s → 11 s after anchoring).
+  - Gemini's silent failures are caught instead of shipped: whole chunk on one
+    line (split at inline stamps); chunk cut short (gap check against the local
+    clock → re-ask, then local fill); filter-blocked chunk (local fill for that
+    range only); **repetition loop** (a 30-line window with < 30 % distinct lines →
+    resend the chunk once, then drop the looping lines). The loop threshold rests on
+    one course (loop 0.13, 43 clean chunks ≥ 0.63) — reports of false positives welcome.
+    A gap that can be neither re-asked nor filled locally (no `--fill-blocked`) now makes
+    the run exit 2, like a blocked chunk, instead of leaving a silent hole.
+- `export_web.py --media-in-place` / `--keep-remux-source`: by default the export now
+  moves every referenced clip into `媒體/影片/` (a rename on the same volume, never a copy).
+  With `--no-compress` it also retires a remuxed original once its copy checks out: the
+  video stream must be packet-identical; audio that was stream-copied must be identical
+  too. A clip whose audio had to be transcoded to AAC (LPCM / AC-3 sources) can only be
+  checked by duration, so its original is kept unless `config.yaml`
+  `export.retire_transcoded_audio` is true (then ±0.1 s). Retirement goes to the Recycle Bin / Trash — a helper script
+  named by `LECTURE_RECYCLE` or `config.yaml` `export.recycle_helper`, else the
+  `Send2Trash` package; with neither, the original is kept and the export says so. Never
+  on a network drive (Windows: fixed local disks only; macOS: not under /Volumes).
+- `crop_multiup_pdf.py --row-bands / --col-bands` to override band detection.
+
+### Security / privacy
+
+- **The sync tool now leak-scans every published file** (`tools/sync_from_skill.py`): absolute
+  user paths, WSL/NAS paths, machine-local secret helpers abort the sync before anything is written;
+  name-shaped patterns come from a denylist kept next to the private source, so the tool never
+  spells them out. Byte-identical copies were only as clean as their source.
+- `data/real_words.txt` (shipped since 0.1.0) contained one token taken from a download watermark in
+  the reference corpus (nothing that was not already public). The wordlists are now filtered through
+  the same denylist.
+
+### Changed
+
+- **`export_web.py` now moves source clips.** Every clip the page references is renamed into
+  `媒體/影片/` next to the page (same volume only — never a copy; across volumes or mount points it
+  is left in place with a warning) and `manifest.json` is rewritten to point there (backup kept as
+  `manifest.json.bak-movemedia-<date>`). Opt out with `--media-in-place`; `--no-remux` also
+  leaves clips in place. A byte-identical leftover from an interrupted run goes to the Recycle Bin
+  / Trash (fixed local disks only), never `os.remove`.
+- `export_web.py` playback fixes: the `--no-compress` copy path tags HEVC `hvc1` (Safari / QuickTime
+  refused `hev1`); `-map 0:v:0?` so an audio-only source (.m4a) no longer ends up `exists:false`;
+  a blank line after `![[img]]` before a `> caption` so the caption stays a blockquote;
+  `media_abspath()` falls back to `媒體/影片/<stem>.mp4` once an original was retired.
+- `retranscribe_segment.py`: from the second segment on, the GPU lease no longer demands 4 GB free
+  (the script's own loaded model held that VRAM, so it waited on itself).
+- `reference/`: new `decisions.md#vlm-ultrasound` (Stage D measured worthless on ultrasound footage)
+  and the 2026-10 CTranslate2 exit-path / OOM-relaunch notes; `pipeline.md` now states conditioning is
+  OFF by default (the code already was).
+- **Transcription runs on bare defaults** (`--lang` only). An n=15 sweep found
+  `--beam-size 10` lost recall (604 vs 649 real terms) at 1.7× the time and
+  `--initial-prompt` invents near-miss words; `transcribe_video.py` now warns on
+  first-pass deviations, and `route_inputs.py` no longer prints the old flags. README
+  updated to match.
+- `transcribe_video.py` / `retranscribe_segment.py`: a CTranslate2 model is never
+  destroyed in-process (the destructor aborted with 0xC0000409 after the transcript
+  was written); OOM fallback relaunches a fresh decode process instead.
+- `_html_safety.py` allows `<label>`: newer pandoc wraps task-list items in it, which
+  the sanitizer printed as literal text.
+
 ## [0.8.0] — 2026-10-13
 
 Follow-up to [issue #1](https://github.com/drpwchen/lecture-to-notes/issues/1)
