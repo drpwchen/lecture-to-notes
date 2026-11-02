@@ -111,8 +111,10 @@ ALLOWED_TAGS = {
     # tables
     "table", "caption", "colgroup", "col", "thead", "tbody", "tfoot", "tr",
     "th", "td",
-    # pandoc task lists: `- [ ]` -> <input type="checkbox" disabled="">
-    "input",
+    # pandoc task lists: `- [ ]` (and `- ☐`／`- ☒`) -> <label><input type="checkbox"
+    # disabled="" />text</label>. Newer pandoc wraps the item in <label>; without it
+    # the sanitizer printed a literal "<label>" (2026-11-02).
+    "input", "label",
 }
 
 GLOBAL_ATTRS = {"id", "class", "title", "lang", "dir", "role", "aria-hidden",

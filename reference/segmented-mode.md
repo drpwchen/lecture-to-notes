@@ -378,6 +378,21 @@ deliverables.
 The friendly-named web deliverable is a regenerable VIEW. ==Do not rename frames
 or notes here== — the rename map lives in the export, not the work dir.
 
+**Deliverable tree — where the videos live (user ruling 2026-09-16).** ==Every
+clip the HTML references lives in `<課>/影片筆記整合/媒體/影片/`; the course
+root keeps only `影片筆記整合.html`, `影片筆記整合/` and `分享說明.txt`. Never two
+copies of a clip.== `export_web --no-compress` leaves web-native mp4s where the
+manifest points (root or a `Knee/` subfolder), so after every export run the
+mover — since 2026-09-16 `export_web.py` does this itself (`move_media_into_support`, opt out with `--media-in-place`): it `os.replace`s each referenced clip into `媒體/影片` (same volume →
+rename, no copy), retags HEVC `hev1→hvc1` (Apple decoders refuse `hev1`),
+repoints `media_src` in the HTML's inline TIMELINE and `_timeline.json` (key
+both the bare basename and the `Knee\x.mp4` data-file spelling), and rewrites
+`manifest.json` `clips[].src` so the next re-export resolves the new location
+and moves nothing back. A clip that was remuxed (`--remux`, LPCM/AC-3 audio, `.MTS` …) gets a copy twin `媒體/影片/NN_*.mp4`; ==since 2026-09-27 `export_web` retires the original itself (`retire_remux_sources`, opt out with `--keep-remux-source`)==: video packets md5-equal and audio md5-equal (or, when the source audio was not browser-playable and had to become AAC, equal duration — only with `config.yaml` `export.retire_transcoded_audio: true`; off by default, such originals are kept) → the twin is renamed to the stable `<stem>.mp4` (`NN_` numbers shift when clips are added, which would orphan a retired source) and the original goes to the Recycle Bin (via a helper script named by env `LECTURE_RECYCLE` or `config.yaml` `export.recycle_helper`, else the `send2trash` package; with neither, originals are kept and the export says so). segments/manifest/catalog keep the original name (`IMG_6317.MOV`) — `media_abspath()` falls back to `媒體/影片/<stem>.mp4`, and downstream keys/sort orders (a batch driver that numbers clips `cNN` by sorted `media_files`) stay put. Never runs for `--compress`, `--out` share exports, or a source that is not on a local fixed disk (UNC/NAS/mapped network drives have no Recycle Bin — a library exported in place on a NAS would lose files). Re-export a course that was built with `--remux` WITH `--remux` again, or the original moves in as a web-native clip and the old `NN_` twins are left orphaned. ==`export_web` reads `_raw/manifest.json` (staged by `split_L1_by_segment`), so whoever edits `manifest.json` must re-sync that copy== — a stale `_raw` path once exported a course into its category root. Audio-only courses (m4a/mp3) are exempt. Codec is fixed at HEVC `hvc1` + AAC; a
+source that is already H.265 is never re-encoded — the `--no-compress` copy path
+adds the tag, a share copy uses `--no-compress --remux`.
+
+
 ## Step 9 — Web export {#step9}
 
 ```bash
@@ -393,6 +408,8 @@ python <skill-dir>/scripts/export_web.py "<course dir>" [--name "課程全名"] 
 | `--author` | name in the page footer; ==blank by default, which omits the footer entirely== |
 | `--remux` | force-process ALL clips to mp4 (default is auto — only non-web-playable formats) |
 | `--no-remux` | never process, even `.MTS`; deploy original filenames as-is |
+| `--media-in-place` | do NOT move web-native clips into `媒體/影片` (default since 2026-09-16 is to move them — see Step 8 *Deliverable tree*). A `--out` share export never moves anything regardless |
+| `--keep-remux-source` | keep a remuxed clip's original even when its `媒體/影片` copy is verified identical (default since 2026-09-27: retire it to the Recycle Bin, serve `<stem>.mp4`) |
 | `--no-compress` | ship video streams as-is (copy, fast, full size) — compression is ==ON by default== since 2026-08-03 |
 | `--codec` | `hevc` (x265, default — smallest) or `h264` (x264 — universal playback, for sharing to machines you can't verify) |
 | `--crf` | quality for compression. Default 24 for hevc, 18 for h264 (≈ visually lossless each; measured equivalents 2026-08-03) |

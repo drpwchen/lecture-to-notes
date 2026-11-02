@@ -62,7 +62,7 @@ Usage:
 
 Requires pandoc + ffmpeg/ffprobe on PATH (checked up front, before any work).
 """
-import json, os, re, sys, subprocess, shutil, html, hashlib, tempfile, argparse
+import json, os, re, sys, subprocess, shutil, html, hashlib, tempfile, argparse, time
 from urllib.parse import quote
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -101,6 +101,14 @@ def build_argparser():
                          "empty = no footer)")
     ap.add_argument("--remux", action="store_true", help="force-process ALL clips to mp4 (default: auto — only non-web-playable formats)")
     ap.add_argument("--no-remux", action="store_true", help="never process (even .MTS); deploy original filenames as-is")
+    ap.add_argument("--keep-remux-source", action="store_true",
+                    help="keep a remuxed clip's original file even when its 媒體/影片 copy is verified "
+                         "stream-identical (default with --no-compress: retire it to the Recycle Bin; a clip whose audio had to be transcoded is kept unless config export.retire_transcoded_audio is true)")
+    ap.add_argument("--media-in-place", action="store_true",
+                    help="do NOT move web-native clips into 媒體/影片 (default since 2026-09-16: every clip the "
+                         "page references is renamed into the support folder — same volume, no copy — and "
+                         "manifest clips[].src is rewritten; a --out share export, --no-remux, or a clip on another volume / mount "
+                         "point never moves)")
     ap.add_argument("--compress", action="store_true",
                     help="(default since 2026-08-03; kept for backward compatibility)")
     ap.add_argument("--no-compress", action="store_true",
@@ -144,6 +152,19 @@ def audio_codec(path):
     return r.stdout.strip().lower()
 
 
+def video_codec(path):
+    """Codec name of the first video stream ("" when audio-only). Probe failures
+    return "" too — the only consumer decides whether to add `-tag:v hvc1`, and
+    a missing tag is exactly the pre-2026-09-15 behaviour, never worse."""
+    try:
+        r = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "v:0",
+                            "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
+                           capture_output=True, text=True)
+    except OSError:
+        return ""
+    return r.stdout.strip().lower() if r.returncode == 0 else ""
+
+
 def audio_codec_or_unknown(path, problems):
     """audio_codec() that records probe failures instead of raising.
 
@@ -171,7 +192,121 @@ def media_abspath(fn):
     the manifest in main(); an unknown name falls back to the flat join, so
     flat-layout courses behave exactly as before.
     """
-    return os.path.join(COURSE_ROOT, MEDIA_REL.get(fn, fn))
+    p = os.path.join(COURSE_ROOT, MEDIA_REL.get(fn, fn))
+    if not os.path.exists(p):
+        # A clip relocated into the support folder (2026-09-16 rule) while the manifest
+        # still names its old root/subfolder path — resolve it where it lives now.
+        try:
+            alt = os.path.join(MEDIA_VID, os.path.basename(fn))
+            if os.path.exists(alt):
+                return alt
+            # A remuxed clip whose original was retired (retire_remux_sources): the served
+            # copy lives on as <stem>.mp4 while segments/manifest/catalog keep the original
+            # name (IMG_6317.MOV), so every downstream key and sort order stays put.
+            alt = os.path.join(MEDIA_VID, os.path.splitext(os.path.basename(fn))[0] + ".mp4")
+            if os.path.exists(alt):
+                return alt
+        except (NameError, TypeError):
+            pass
+    return p
+
+
+def move_media_into_support(refs, remuxed):
+    """2026-09-16 user ruling: ==every clip the page references lives in 媒體/影片; the
+    course root keeps no media; never two copies==. Web-native clips that convert_videos()
+    left in place are renamed (os.replace, same volume) into MEDIA_VID under their
+    ORIGINAL basename, and manifest clips[].src is rewritten so the next export resolves
+    them there and moves nothing back. Returns {original filename: url relative to the HTML}.
+    Skipped entirely for --media-in-place, for a --out export whose support folder is not
+    inside the course root (share copies), and for a clip on another volume (would be a copy)."""
+    moved, n_phys = {}, 0
+    if A.media_in_place or A.no_remux:
+        return moved
+    try:
+        inside = os.path.commonpath([os.path.abspath(SUPPORT), os.path.abspath(COURSE_ROOT)]) == \
+            os.path.abspath(COURSE_ROOT)
+    except ValueError:
+        inside = False
+    if not inside:
+        return moved
+    for fn in refs:
+        if fn in remuxed:
+            continue
+        src = media_abspath(fn)
+        if not os.path.isfile(src):
+            continue
+        src_abs = os.path.abspath(src)
+        dst = os.path.join(MEDIA_VID, os.path.basename(src))
+        url = VID_URL_PREFIX + os.path.basename(src)
+        if os.path.abspath(os.path.dirname(src_abs)) == os.path.abspath(MEDIA_VID):
+            moved[fn] = url          # already home; just make sure the URL says so
+            continue
+        if not _same_volume(src_abs, MEDIA_VID):
+            print(f"  ⚠️ {fn}: on another volume than the support folder — left in place (a move would be a copy)",
+                  file=sys.stderr)
+            continue
+        if os.path.exists(dst):
+            if (os.path.getsize(dst) == os.path.getsize(src_abs) and _same_bytes(dst, src_abs)
+                    and _on_local_fixed_disk(src_abs)):   # a network drive has no Recycle Bin
+                # byte-identical twin from an interrupted run: keep the one in 媒體/影片, recycle the other
+                recycle = _recycler()
+                gone, why = recycle(src_abs) if recycle else (False, "no Recycle Bin helper")
+                if not gone:
+                    print(f"  ⚠️ {fn}: identical copy already in 媒體/影片 but the original could not be "
+                          f"recycled ({why[:80]}) — left in place", file=sys.stderr)
+                    continue
+            else:
+                print(f"  ⚠️ {fn}: 媒體/影片 already holds a different file of that name — left in place",
+                      file=sys.stderr)
+                continue
+        else:
+            os.makedirs(MEDIA_VID, exist_ok=True)
+            try:
+                os.replace(src_abs, dst)
+            except OSError as e:   # EXDEV across mount points, file in use, permissions
+                print(f"  ⚠️ {fn}: could not move into 媒體/影片 ({e}) — left in place", file=sys.stderr)
+                continue
+            n_phys += 1
+        moved[fn] = url
+    if not moved:
+        return moved
+    # manifest clips[].src → new path relative to COURSE_ROOT (backslashes, like the rest of the file)
+    changed = 0
+    for c in MANIFEST.get("clips") or []:
+        bn = os.path.basename(c.get("src") or "")
+        if bn in moved and not os.path.exists(os.path.join(MEDIA_VID, bn)):
+            continue  # served under another name (retired remux source → <stem>.mp4): keep the original key
+        if bn in moved:
+            new_rel = os.path.relpath(os.path.join(MEDIA_VID, bn), COURSE_ROOT)
+            if c.get("src") != new_rel:
+                c["src"] = new_rel
+                MEDIA_REL[bn] = new_rel
+                changed += 1
+    if changed:
+        mp = MANIFEST_PATH
+        bakp = mp + ".bak-movemedia-" + time.strftime("%Y%m%d")
+        if not os.path.exists(bakp):
+            shutil.copy2(mp, bakp)
+        atomic_write_json(mp, MANIFEST, indent=2)
+        # the staged _raw/manifest.json is a copy of <course>/manifest.json (split_L1_by_segment);
+        # keep the original in step too, or the next staging would resurrect the old paths.
+        sib = os.path.join(COURSE, "manifest.json")
+        if os.path.abspath(sib) != os.path.abspath(mp) and os.path.isfile(sib):
+            try:
+                with open(sib, encoding="utf-8") as fh:
+                    sm = json.load(fh)
+                sc = 0
+                for c in sm.get("clips") or []:
+                    bn = os.path.basename(c.get("src") or "")
+                    if bn in moved and c.get("src") != MEDIA_REL.get(bn):
+                        c["src"] = MEDIA_REL[bn]; sc += 1
+                if sc:
+                    atomic_write_json(sib, sm, indent=2)
+            except (OSError, ValueError) as e:  # noqa: BLE001
+                print(f"  ⚠️ could not sync {sib}: {e}", file=sys.stderr)
+    print(f"  媒體/影片: {n_phys} clip(s) moved in, {len(moved) - n_phys} already there "
+          f"(manifest src rewritten: {changed})")
+    return moved
 
 
 def resolve_course_root(manifest, manifest_path, course):
@@ -493,6 +628,14 @@ def preprocess(md, seg):
                 md, flags=re.M)
     md = EMBED_RE.sub(
                 lambda m: f'<img class="fig" src="{escq(quote(IMG_URL_PREFIX + IMG_MAP.get(m.group(1), m.group(1)), safe="/"))}" loading="lazy">', md)
+    # 2026-09-07: the note convention (spec Step 3/4 "two-line caption", every delivered
+    # course) is `![[img|600]]` with the `> caption` blockquote on the VERY NEXT line, no
+    # blank line. pandoc's markdown keeps `blank_before_blockquote` on, so once the embed
+    # has become an inline <img> the `>` lines are lazy paragraph continuation and ship
+    # as literal `&gt;` glued to the image (32 in 2026-04-18, 340 in 2019-05-25 …).
+    # Insert the blank line here so the caption renders as a real <blockquote>; notes
+    # stay untouched and a caption that already has a blank line is unaffected.
+    md = re.sub(r'(<img class="fig"[^\n]*>)\n(?=>)', r'\1\n\n', md)
     # inline prose mentions of a frame-id (e.g. "見 `c04_frame_0003.jpg`") -> friendly name
     md = re.sub(r'c\d+_frame_\d+(?:\.jpg)?',
                 lambda m: IMG_MAP.get(m.group(0) if m.group(0).endswith('.jpg') else m.group(0) + '.jpg', m.group(0)), md)
@@ -1274,15 +1417,23 @@ def copy_notes():
 def encode_one(src, out):
     aud = audio_codec_or_unknown(src, PROBE_PROBLEMS)
     acodec = ["-c:a", "copy"] if aud in WEB_AUDIO else ["-c:a", "aac", "-b:a", "192k"]
-    # hevc gets `-tag:v hvc1` so QuickTime/Safari recognize the track.
+    # hevc gets `-tag:v hvc1` so QuickTime/Safari recognize the track — on the
+    # copy path too: a pre-compressed nvenc/x265 source carries ffmpeg's default
+    # `hev1`, and `-c:v copy` shipped it as-is (2026-09-15 share export: 29/29
+    # clips silently unplayable on every Mac). Retagging is a box rename, no re-encode.
     if not A.compress:
         vcodec = ["-c:v", "copy"]
+        if video_codec(src) == "hevc":
+            vcodec += ["-tag:v", "hvc1"]
     elif A.codec == "hevc":
         vcodec = ["-c:v", "libx265", "-crf", str(A.crf), "-preset", "medium",
                   "-tag:v", "hvc1", "-pix_fmt", "yuv420p"]
     else:
         vcodec = ["-c:v", "libx264", "-crf", str(A.crf), "-preset", "slow", "-pix_fmt", "yuv420p"]
-    cmd = [FFMPEG, "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0", "-sn"] + vcodec + acodec + [out]
+    # `0:v:0?` — optional: an audio-only source (e.g. a phone voice memo
+    # .m4a) has no video stream and a hard `0:v:0` map made ffmpeg refuse the
+    # whole file, leaving the recording unresolved (exists:false) in the export.
+    cmd = [FFMPEG, "-y", "-i", src, "-map", "0:v:0?", "-map", "0:a:0", "-sn"] + vcodec + acodec + [out]
     r = subprocess.run(cmd, capture_output=True)
     if r.returncode == 0:
         return True
@@ -1314,6 +1465,186 @@ def output_ok(out, src):
     return True
 
 
+def _served_from_support(fn):
+    """The clip already resolves to a file inside 媒體/影片 (its original was retired, or it
+    was moved there): converting it again would only mint a second copy."""
+    try:
+        return os.path.abspath(os.path.dirname(media_abspath(fn))) == os.path.abspath(MEDIA_VID)
+    except (NameError, TypeError):
+        return False
+
+
+def _recycle_helper():
+    """Helper script that sends one path to the Recycle Bin / Trash: env LECTURE_RECYCLE, else
+    config.yaml `export.recycle_helper` (`~` expanded), else none."""
+    v = os.environ.get("LECTURE_RECYCLE") or ""
+    if not v:
+        try:
+            v = str(((load_config() or {}).get("export") or {}).get("recycle_helper") or "")
+        except Exception:  # noqa: BLE001
+            v = ""
+    return os.path.expanduser(v) if v else ""
+
+
+def _retire_transcoded_audio():
+    """config.yaml `export.retire_transcoded_audio` (default false): retire a remux original whose
+    audio had to be re-encoded, on a duration match alone. Video must still be packet-identical."""
+    try:
+        v = ((load_config() or {}).get("export") or {}).get("retire_transcoded_audio")
+    except Exception:  # noqa: BLE001
+        v = None
+    return v is True or str(v).strip().lower() in ("true", "yes", "1")
+
+
+def _same_volume(path, folder):
+    """True when a rename from path into folder stays on one filesystem (folder may not exist yet:
+    its nearest existing ancestor is used). st_dev works on POSIX mount points, not just drive letters."""
+    f = os.path.abspath(folder)
+    while not os.path.exists(f) and os.path.dirname(f) != f:
+        f = os.path.dirname(f)
+    try:
+        return os.stat(path).st_dev == os.stat(f).st_dev
+    except OSError:
+        return False
+
+
+def _same_bytes(a, b, block=1 << 22):
+    with open(a, "rb") as fa, open(b, "rb") as fb:
+        while True:
+            x, y = fa.read(block), fb.read(block)
+            if x != y:
+                return False
+            if not x:
+                return True
+
+
+def _recycler():
+    """How retire_remux_sources sends a file to the Recycle Bin / Trash, or None (originals are then kept).
+    1. a helper script taking one path (env LECTURE_RECYCLE, else config.yaml export.recycle_helper);
+    2. the `send2trash` package (pip install send2trash)."""
+    helper = _recycle_helper()
+    if helper and os.path.isfile(helper):
+        def via_helper(p):
+            cmd = [sys.executable, helper, p] if helper.lower().endswith(".py") else [helper, p]
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            return r.returncode == 0 and not os.path.exists(p), (r.stderr or r.stdout).strip()
+        return via_helper
+    try:
+        from send2trash import send2trash
+    except ImportError:
+        return None
+
+    def via_send2trash(p):
+        try:
+            send2trash(p)
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)
+        return not os.path.exists(p), ""
+    return via_send2trash
+
+
+def _on_local_fixed_disk(path):
+    """Only a fixed local disk has a Recycle Bin. On a UNC/NAS path or a mapped network
+    drive a 'recycle' is a permanent delete (a library exported in place on a
+    NAS would lose files), so retirement must never run there."""
+    p = os.path.abspath(path)
+    if p.startswith("\\\\") or p.startswith("//"):
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            return ctypes.windll.kernel32.GetDriveTypeW(os.path.splitdrive(p)[0] + "\\") == 3  # DRIVE_FIXED
+        except Exception:  # noqa: BLE001
+            return False
+    return not p.startswith("/Volumes/")  # macOS network/external mounts: Trash may be absent
+
+
+def _streamhash(path, spec):
+    r = subprocess.run([FFMPEG, "-v", "error", "-i", path, "-map", spec, "-c", "copy",
+                        "-f", "streamhash", "-hash", "md5", "-"], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _duration(path):
+    r = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+                       capture_output=True, text=True)
+    try:
+        return float(r.stdout.strip())
+    except ValueError:
+        return None
+
+
+def retire_remux_sources(refs, remuxed):
+    """Disk space (2026-09-27): identical copies are not kept twice. A copy-remux (--remux, LPCM/AC-3 audio,
+    .MTS …) left the original beside its 媒體/影片/NN_*.mp4 twin — one course carried 29 MOVs
+    twice (4.59 GB). After verifying the twin, rename it to the stable <stem>.mp4 (NN_ numbers
+    shift whenever clips are added, which would orphan a retired source) and send the original
+    to the Recycle Bin. Names in segments/manifest/catalog stay untouched; media_abspath() finds
+    <stem>.mp4. Identity: video packets md5-equal; audio md5-equal when it was copied, or — when
+    the source audio was not browser-playable and had to become AAC — equal duration (±0.1 s).
+    Skipped for --compress (lossy output is not the same content), --keep-remux-source, share
+    exports outside the course root, and anything not on a local fixed disk.
+    Returns {fn: path of the served copy}."""
+    retired = {}
+    if A.compress or A.no_remux or getattr(A, "keep_remux_source", False) or not remuxed:
+        return retired
+    try:
+        inside = os.path.commonpath([os.path.abspath(SUPPORT), os.path.abspath(COURSE_ROOT)]) == \
+            os.path.abspath(COURSE_ROOT)
+    except ValueError:
+        inside = False
+    recycle = _recycler() if inside else None
+    if recycle is None:
+        if inside:
+            print("  retire: no Recycle Bin helper (set LECTURE_RECYCLE / export.recycle_helper, or pip install send2trash) — "
+                  "remux originals kept", file=sys.stderr)
+        return retired
+    freed = 0
+    for fn in sorted(remuxed):
+        src, out = media_abspath(fn), os.path.join(MEDIA_VID, VID_MAP[fn])
+        if not (os.path.isfile(src) and os.path.isfile(out)):
+            continue
+        if os.path.abspath(os.path.dirname(src)) == os.path.abspath(MEDIA_VID):
+            continue
+        if not _on_local_fixed_disk(src):
+            print(f"  retire: {fn} not on a local fixed disk (no Recycle Bin) — original kept", file=sys.stderr)
+            continue
+        home = os.path.join(MEDIA_VID, os.path.splitext(os.path.basename(fn))[0] + ".mp4")
+        if os.path.exists(home) and os.path.abspath(home) != os.path.abspath(out):
+            print(f"  ⚠️ retire: {os.path.basename(home)} already exists — {fn} kept", file=sys.stderr)
+            continue
+        vs = _streamhash(src, "0:v:0?")
+        if vs is None or vs != _streamhash(out, "0:v:0?"):
+            print(f"  ⚠️ retire: {fn} video differs from its 媒體/影片 copy — kept", file=sys.stderr)
+            continue
+        aud = audio_codec_or_unknown(src, PROBE_PROBLEMS)
+        if aud in WEB_AUDIO or aud == "":
+            ok = _streamhash(src, "0:a:0?") == _streamhash(out, "0:a:0?")
+        elif not _retire_transcoded_audio():
+            print(f"  retire: {fn} audio was transcoded ({aud} → AAC), only its duration could be checked — "
+                  "original kept (config export.retire_transcoded_audio: true to retire anyway)", file=sys.stderr)
+            continue
+        else:
+            ds, do = _duration(src), _duration(out)
+            ok = ds is not None and do is not None and abs(ds - do) <= 0.1
+        if not ok:
+            print(f"  ⚠️ retire: {fn} audio differs from its 媒體/影片 copy — kept", file=sys.stderr)
+            continue
+        size = os.path.getsize(src)
+        os.replace(out, home)
+        gone, why = recycle(src)
+        if not gone:
+            os.replace(home, out)  # could not recycle → undo, leave both as they were
+            print(f"  ⚠️ retire: recycling {fn} failed — kept ({why[:120]})", file=sys.stderr)
+            continue
+        retired[fn] = home
+        freed += size
+    if retired:
+        print(f"  retire: {len(retired)} remux original(s) → Recycle Bin, served as <stem>.mp4 "
+              f"({freed / 1e9:.2f} GB freed)")
+    return retired
+
+
 def convert_videos(refs):
     """3. Browser-playable conversion (auto-selective). A clip gets an FFmpeg pass if its
     container isn't web-playable, OR its audio isn't browser-decodable (==AVCHD .MTS use
@@ -1326,7 +1657,8 @@ def convert_videos(refs):
     if A.no_remux:
         return remuxed
     needs = [fn for fn in refs
-             if (A.remux or A.compress or needs_remux(fn)
+             if not _served_from_support(fn)
+             and (A.remux or A.compress or needs_remux(fn)
                  or audio_codec_or_unknown(media_abspath(fn),
                                            PROBE_PROBLEMS) not in WEB_AUDIO)]
     for i, fn in enumerate(needs, 1):
@@ -1462,7 +1794,7 @@ def write_share_readme(refs, remuxed):
 # ---------------------------------------------------------------------------
 
 def main(argv=None):
-    global A, AUTHOR, COURSE, COURSE_ROOT, COURSE_NAME, COURSE_DATE, MANIFEST, MEDIA_REL
+    global A, AUTHOR, COURSE, COURSE_ROOT, COURSE_NAME, COURSE_DATE, MANIFEST, MEDIA_REL, MANIFEST_PATH
     global HUB, hub_fm, segs, by, ORDER, RANK
     global SUPPORT, HTML_OUT, MEDIA_IMG, MEDIA_VID, MD_OUT, PDF_OUT
     global IMG_URL_PREFIX, VID_URL_PREFIX, FIGURE_ROOTS
@@ -1510,6 +1842,7 @@ def main(argv=None):
         sys.exit(2)
     with open(manifest_path, encoding="utf-8") as fh:
         MANIFEST = json.load(fh)
+    MANIFEST_PATH = manifest_path
     COURSE_ROOT = resolve_course_root(MANIFEST, manifest_path, COURSE)
     # basename -> manifest-relative src, so subfoldered layouts resolve (see media_src)
     MEDIA_REL = {os.path.basename(c["src"]): c["src"]
@@ -1570,6 +1903,9 @@ def main(argv=None):
 
     refs = sorted({fn for s in segs for fn in s.get('files', [])})
     remuxed = convert_videos(refs)
+    remuxed = set(remuxed) - set(retire_remux_sources(refs, remuxed))
+    old_rel = dict(MEDIA_REL)            # data-file spellings before any move (subfolder forms)
+    moved = move_media_into_support(refs, remuxed)
 
     def resolver_inplace(fn):
         # remuxed clips served from the support folder; web-native originals fall
@@ -1580,11 +1916,20 @@ def main(argv=None):
         # fall-back branch and all 18 video links 404'd.
         if fn in remuxed:
             return VID_URL_PREFIX + VID_MAP[fn]
+        if fn in moved:
+            return moved[fn]
         rel = MEDIA_REL.get(fn, fn).replace("\\", "/")
         return rel if "/" in rel else None
 
     # 4. timeline + the single webpage (at the course root; media_root "." = course root)
     sw, tl = build_timeline(resolver_inplace)
+    # viewer mediaUrl() looks up media_src[data-file]; a data-file may carry the manifest's
+    # subfolder spelling (`Knee\\x.mp4`) while media_src is keyed by basename — key both.
+    for _fn, _url in list((tl.get("media_src") or {}).items()):
+        _rel = old_rel.get(_fn)
+        if _rel and _rel != _fn:
+            tl["media_src"][_rel] = _url
+            tl["media_src"][_rel.replace("\\", "/")] = _url
     # media existence is VERIFIED, not assumed (2026-08-04): `exists` used to be
     # hard-coded True even when the resolved target was gone — US-nerve-track shipped
     # 11 dead in-place 錄音/*.mp3 references for a month with zero alarm after the
@@ -1622,7 +1967,7 @@ def main(argv=None):
     print(f"  support={SUPPORT}")
     print(f"  sections={len(present)} segments={len(tl['segments'])} note_blocks={nblk} "
           f"slide_blocks={len(tl['slide_blocks'])} images={len(IMG_MAP)} "
-          f"video={len(remuxed)}/{len(refs)} clips [{vmode}]")
+          f"video={len(remuxed)}/{len(refs)} clips [{vmode}] moved={len(moved)}")
 
     if PROBE_PROBLEMS:
         print(f"  ⚠️ ffprobe could not read {len(PROBE_PROBLEMS)} file(s) — their "
@@ -1642,7 +1987,7 @@ def main(argv=None):
     rc = check_embeds()
     if rc:
         return rc
-    write_share_readme(refs, remuxed)
+    write_share_readme(refs, set(remuxed) | set(moved))
     return 0
 
 

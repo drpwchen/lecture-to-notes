@@ -210,6 +210,9 @@ def main():
                          "bump to 0.025+ if captions/citations at slide bottom "
                          "get clipped")
     ap.add_argument("--debug", action="store_true")
+    # 2026-10-05：偵測式 band 在留白多的 2-up 講義會切出半張；給定 "0-0.5,0.5-1" 就直接用，跳過 consensus 的邊界
+    ap.add_argument("--row-bands", default=None)
+    ap.add_argument("--col-bands", default=None)
     args = ap.parse_args()
 
     if not os.path.isfile(args.pdf_path):
@@ -308,6 +311,12 @@ def run(doc, args):
         ends = [c[i][1] for c in good_cols]
         consensus_cols.append((statistics.median(starts),
                                 statistics.median(ends)))
+
+    def _bands(t): return [tuple(float(x) for x in seg.split("-")) for seg in t.split(",")]
+    if args.row_bands:
+        consensus_rows = _bands(args.row_bands); expected_rows = len(consensus_rows)
+    if args.col_bands:
+        consensus_cols = _bands(args.col_bands); expected_cols = len(consensus_cols)
 
     # ==Stability audit== — per-band stddev across samples (in % of
     # page dim). High stddev means margins drift across pages —
