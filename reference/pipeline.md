@@ -85,12 +85,12 @@ but is idle — proceed and log), `2` blocked. Emits
 | `--model` | `breeze25` | alias from `config.yaml models.aliases`, or any path / HF hub name |
 | `--compute-type` | `float16` | |
 | `--device` | `auto` | `auto` tries CUDA and drops to CPU int8 when CUDA is missing **or the model does not fit the card** (load-time OOM); `cpu` skips the CUDA attempt (2–4 GB cards: pair with `--model small`/`medium`, `large-v3` on CPU is hours per hour of audio); `cuda` never falls back. The CPU choice is exported as `LECTURE_ASR_DEVICE=cpu` so the collapse-retry child does not OOM again. |
-| `--beam-size` | `5` | 10 for accented / domain-heavy speech (~30 % slower) |
+| `--beam-size` | `5` | ==keep 5 on a first pass==: 10 lost recall (604 vs 649 real terms) at 1.7× time in the 2026-07-12 n=15 sweep; 10 is for the anti-collapse retry only |
 | `--batched` / `--no-batched` | batched ON | ==but batching only engages when `--vad` is also passed==, because `BatchedInferencePipeline` requires `vad_filter=True` and VAD has been off by default since 2026-07-12. With default flags this runs SEQUENTIAL. |
 | `--batch-size` | `4` | safe on 8 GB with beam 10; on CUDA OOM it retries once at half, then falls back to sequential |
 | `--vad` | off | VAD was eating quiet speech |
-| `--condition` / `--no-condition` | conditioning ON | `--lang bilingual` forces `--no-condition` |
-| `--initial-prompt` / `--initial-prompt-file` | none | glossary to bias decoding (≤~150 words) |
+| `--condition` / `--no-condition` | conditioning OFF | `--condition` re-enables it (propagates drift / repetition loops) |
+| `--initial-prompt` / `--initial-prompt-file` | none | ==not on a first pass==: a prompt pulls decoding toward the glossary and invents near-miss words (`paravertibone`); anti-collapse retry only (≤~150 words) |
 | `--keep-audio`, `--word-timestamps` | off | |
 | `--engine` | `local` | `groq` is an ==optional== hosted offload, not the default |
 | `--retry-timeout` | none | seconds for the auto-retry child process |
@@ -104,10 +104,14 @@ faster-whisper downloads from the hub. `config.example.yaml` ships
 shipped default.
 
 **Language modes.** `zh` Chinese model, accepts inline English domain terms · `en`
-English model · `bilingual` Chinese model with deterministic decode
+English decoding with the ==same breeze25 model== (ties large-v3 on English; do not switch) · `bilingual` Chinese model with deterministic decode
 (`condition_on_previous_text=False`, `temperature=[0.0, 0.2]`, VAD
 `min_silence_ms=800`) for code-switching · `auto` experimental, unstable on mixed
 audio, logs the probability vector to `runs.jsonl`, not for production.
+
+**Gemini primary (2026-10-25).** Where the user allows sending audio out, `asr_gemini_primary.py` replaces
+this call: breeze25 anchor (clock + cross-check) → Gemini text → breeze25 for blocked chunks → `transcript.json` with a `source`
+field per line. See SKILL.md Step 4 and `decisions.md#gemini-primary`.
 
 **Groq offload.** `--engine groq` sends audio to a hosted `whisper-large-v3-turbo`
 and frees the local GPU. It auto-runs collapse detection on the result and falls

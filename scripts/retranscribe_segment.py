@@ -325,31 +325,43 @@ def transcribe_chunk(audio_path, language, glossary, beam_size=15,
     # Per-chunk GPU lease: short holds queue politely behind (and get yielded
     # to by) long batches. No-op under a lease-holding parent (asr_resweep run
     # through `gpu_lease run`) or on boxes without the lease script.
-    with gpu_lease_ctx("retranscribe_segment", min_free_mb=4000):
-        model = load_model(model_ref or DEFAULT_MODEL_ALIAS)
-        try:
-            segments, info = model.transcribe(
-                audio_path,
-                language=language,
-                beam_size=beam_size,
-                vad_filter=True,
-                vad_parameters={"min_silence_duration_ms": 300},
-                initial_prompt=glossary,
-                condition_on_previous_text=False,
-                temperature=[0.0, 0.2, 0.4, 0.6, 0.8],
-                repetition_penalty=repetition_penalty,
-                no_repeat_ngram_size=no_repeat_ngram_size,
-            )
-            out = [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text}
-                   for s in segments]
-        finally:
-            # Best effort: drop our reference so the next chunk's model does not
-            # meet this one on an 8GB card. CTranslate2 frees VRAM in the model's
-            # destructor, so this is as much control as Python gives us.
-            del model
-            import gc
-            gc.collect()
+    # 2026-11-01 fix: once THIS process has the model cached it already owns
+    # ~4 GB of VRAM, so asking for 4000 MB free again self-deadlocks on an 8 GB
+    # card (chunk 2+ waited the full 2400 s timeout; lease.jsonl showed
+    # free_mb≈1700 with nobody else on the GPU). Still queue FIFO, but need 0 MB.
+    _need = 0 if (model_ref or DEFAULT_MODEL_ALIAS) in _MODEL_CACHE else 4000
+    with gpu_lease_ctx("retranscribe_segment", min_free_mb=_need):
+        model = _get_model(model_ref or DEFAULT_MODEL_ALIAS)
+        segments, info = model.transcribe(
+            audio_path,
+            language=language,
+            beam_size=beam_size,
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 300},
+            initial_prompt=glossary,
+            condition_on_previous_text=False,
+            temperature=[0.0, 0.2, 0.4, 0.6, 0.8],
+            repetition_penalty=repetition_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
+        )
+        out = [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text}
+               for s in segments]
     return out
+
+
+# ==Never destroy a CTranslate2 model in-process (2026-10-05)==: on
+# Windows/CUDA the model destructor can abort the whole process with 0xC0000409
+# (decisions.md §ctranslate2-abort). The old per-chunk `del model; gc.collect()`
+# did exactly that — the collapse-retry child crashed before writing its merge.
+# One model is loaded per process, reused for every chunk, and only released by
+# the OS at `os._exit` (see __main__), which also frees the VRAM.
+_MODEL_CACHE: dict = {}
+
+
+def _get_model(model_ref):
+    if model_ref not in _MODEL_CACHE:
+        _MODEL_CACHE[model_ref] = load_model(model_ref)
+    return _MODEL_CACHE[model_ref]
 
 
 def build_glossary_from_pdf(pdf_text_path, slide_range=None, max_chars=600):
@@ -726,4 +738,14 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main() or 0)
+    rc = main() or 0
+    # Skip interpreter teardown so the cached CTranslate2 model is never
+    # destructed (see _MODEL_CACHE). The merged transcript and stage_done are
+    # already on disk; main() closes its logger on every return path. A
+    # SystemExit (argument errors, before any model load) escapes main() and
+    # takes the normal exit. RETRANSCRIBE_CLEAN_EXIT=1 forces a normal exit.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if os.environ.get("RETRANSCRIBE_CLEAN_EXIT") == "1":
+        sys.exit(rc)
+    os._exit(rc)

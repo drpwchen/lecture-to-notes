@@ -27,7 +27,10 @@ are recorded in runs.jsonl.
 Language (`--lang`, REQUIRED)
 -----------------------------
 ``zh``                  — Chinese model, accepts inline English domain words
-``en``                  — English model
+``en``                  — English decoding. SAME model (breeze25): on English audio
+                          it ties large-v3 (1535 vs 1537 real word-types,
+                          precision 98.6% vs 97.8%; asr-benchmark RESULTS.md).
+                          Do NOT switch to large-v3 for English.
 ``bilingual``           — Chinese model with deterministic decode params
                           (``condition_on_previous_text=False``,
                           ``temperature=[0.0, 0.2]``,
@@ -48,23 +51,37 @@ Hugging Face hub name. Default ``breeze25`` (a local converted model; set
 ``paths.whisper_model_dir`` or ``LECTURE_WHISPER_MODEL_DIR``). Without a local
 model directory, use ``--model large-v3``, which faster-whisper downloads.
 
-Tips for accented English / domain-heavy lectures
--------------------------------------------------
-    --initial-prompt-file glossary.txt   bias decoder toward jargon
-    --beam-size 10                       wider search; ~30% slower
-    --no-condition                       disable previous-text conditioning
-                                         (on by default; --lang bilingual too)
+Production invocation = the BARE defaults (2026-10-20)
+------------------------------------------------------
+``--lang <x>`` and nothing else. The defaults ARE the configuration adopted by the
+2026-07-12 n=15 sweep (asr-benchmark, ``breeze25 / novad_nocond``): breeze25,
+beam 5, VAD off, condition_on_previous_text off. Each "tuning" flag measured worse
+on a FIRST pass:
+    --beam-size 10        604 vs 649 real terms (loses recall), 1.7x GPU time
+    --initial-prompt(-file)  a prompt is a pull, not a dictionary: it invents
+                          near-miss words (paravertibone, sacroilar) and did not
+                          rescue the terms it spelled out
+    --model large-v3      ties on English; breeze25 captures +49% terms on zh/en
+                          medical lectures (649 vs 435)
+    --condition           propagates drift / repetition loops
+These belong ONLY in the anti-collapse retry recipe (reference/decisions.md).
+The script prints a WARNING when a first pass deviates.
 """
 from __future__ import annotations
 
 import argparse
 import atexit
-import gc
+import json
 import os
 import re
 import subprocess
 import sys
 import time
+
+# Written by the decode child after stage_done; read + removed by _run_parent.
+HANDOFF_NAME = ".transcribe_handoff.json"
+# CTranslate2 objects parked so they are never destructed in-process.
+_KEEPALIVE: list = []
 
 from _common import (atomic_write_json, fmt_hms, gpu_lease_ctx, load_config,
                      require_binaries, resolve_model, resolve_pause_flag,
@@ -243,15 +260,38 @@ def _write_partial(path: str, results: list[dict]) -> None:
         pass  # checkpointing must never break the run
 
 
+class OomRetry(Exception):
+    """This attempt OOMed and a smaller one remains: the decode child must exit
+    (code OOM_RETRY_RC) so the parent re-launches it with ``--attempt next``."""
+
+    def __init__(self, next_attempt: int, err: BaseException):
+        super().__init__(str(err))
+        self.next_attempt = next_attempt
+
+
+OOM_RETRY_RC = 75
+
+
+def attempt_plan(batch_sizes: list[int], batched_available: bool) -> list[int]:
+    """Batch sizes to try in order; the final 1 = sequential model.transcribe."""
+    return ([b for b in batch_sizes] if batched_available else []) + [1]
+
+
 def transcribe_with_fallback(audio_path: str, model_factory, decode_params: dict,
                              language: str | None, batch_sizes: list[int],
-                             initial_prompt: str | None, log):
-    """Try each batch size; on OOM, free + retry. Final fallback: sequential.
+                             initial_prompt: str | None, log, attempt: int = 0):
+    """Run ONE attempt of the plan (batched sizes…, then sequential).
 
     Returns (segments_iter, info, used_batch_size, fallback_triggered, model).
-    The caller iterates the (lazy) segments and is responsible for dropping its
-    reference to ``model`` afterwards — that reference is what actually holds
-    the VRAM, so it is returned rather than left dangling in a closure.
+
+    ==No model is ever destroyed in this process (2026-10-05)==: the
+    old in-process `del model; gc.collect()` between OOM retries ran
+    CTranslate2's destructor — the 0xC0000409 abort (decisions.md
+    §ctranslate2-abort). A failed attempt's model is parked in _KEEPALIVE and
+    the error raised: OOM with a smaller attempt left → OomRetry, which makes
+    the decode child os._exit(OOM_RETRY_RC); the parent (_run_parent) then
+    starts a fresh child with ``--attempt next`` — VRAM is freed by the OS at
+    process exit, never by the destructor.
     """
     try:
         from faster_whisper import BatchedInferencePipeline
@@ -262,72 +302,83 @@ def transcribe_with_fallback(audio_path: str, model_factory, decode_params: dict
             log.retry(reason="BatchedInferencePipeline missing - using sequential",
                       batch_size=1)
 
-    fallback_triggered = False
-    last_err: Exception | None = None
+    plan = attempt_plan(batch_sizes, batched_available)
+    attempt = max(0, min(attempt, len(plan) - 1))
+    bs = plan[attempt]
+    is_last = attempt == len(plan) - 1
+    fallback_triggered = attempt > 0
+    if fallback_triggered:
+        log.retry(reason=(f"retrying at batch_size={bs}" if bs > 1
+                          else "falling back to sequential mode"),
+                  batch_size=bs, attempt=attempt)
 
-    if batched_available and batch_sizes:
-        for bs in batch_sizes:
-            model = None
-            pipeline = None
-            try:
-                model = model_factory()
-                pipeline = BatchedInferencePipeline(model=model)
-                segments, info = pipeline.transcribe(
-                    audio_path,
-                    language=language,
-                    initial_prompt=initial_prompt,
-                    batch_size=bs,
-                    **decode_params,
-                )
-                # The pipeline returns lazily; trigger first item to surface
-                # an immediate OOM before we hand the iterator back.
-                segments = iter(segments)
-                first = next(segments, None)
-
-                def _chained(first_seg, rest):
-                    if first_seg is not None:
-                        yield first_seg
-                    yield from rest
-
-                return _chained(first, segments), info, bs, fallback_triggered, model
-            except Exception as e:  # noqa: BLE001 — CT2 raises bare RuntimeError on OOM
-                last_err = e
-                # Release the model on EVERY exit from this attempt, not just the
-                # OOM one: a re-raised non-OOM error used to leave several GB of
-                # VRAM held by an unreachable model until process exit.
-                pipeline = None
-                if model is not None:
-                    del model
-                gc.collect()
-                if not _is_oom(e):
-                    raise
-                log.retry(reason=f"batched OOM at batch_size={bs}",
-                          batch_size=bs, error=str(e)[:200])
-                fallback_triggered = True
-                time.sleep(1.0)
-                continue
-
-    # Final fallback: sequential mode (model.transcribe directly).
-    log.retry(reason="falling back to sequential mode",
-              batch_size=1, prev_error=str(last_err)[:200] if last_err else None)
-    model = model_factory()
+    model = None
     try:
+        model = model_factory()
+        if bs > 1:
+            pipeline = BatchedInferencePipeline(model=model)
+            _KEEPALIVE.append(pipeline)
+            segments, info = pipeline.transcribe(
+                audio_path,
+                language=language,
+                initial_prompt=initial_prompt,
+                batch_size=bs,
+                **decode_params,
+            )
+            # The pipeline returns lazily; trigger first item to surface
+            # an immediate OOM before we hand the iterator back.
+            segments = iter(segments)
+            first = next(segments, None)
+
+            def _chained(first_seg, rest):
+                if first_seg is not None:
+                    yield first_seg
+                yield from rest
+
+            return _chained(first, segments), info, bs, fallback_triggered, model
         segments, info = model.transcribe(
             audio_path,
             language=language,
             initial_prompt=initial_prompt,
             **decode_params,
         )
-    except Exception:
-        del model
-        gc.collect()
+        return segments, info, 1, fallback_triggered, model
+    except Exception as e:  # noqa: BLE001 — CT2 raises bare RuntimeError on OOM
+        _KEEPALIVE.append(model)   # never destroy in-process; OS frees at exit
+        if _is_oom(e) and not is_last:
+            log.retry(reason=f"OOM at batch_size={bs} → new decode process",
+                      batch_size=bs, error=str(e)[:200])
+            raise OomRetry(attempt + 1, e) from e
         raise
-    return segments, info, 1, True, model
 
 
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
+
+def _warn_off_default(args) -> None:
+    """Loudly flag a first pass that deviates from the adopted config.
+
+    2026-10-20: a batch copied ``--beam-size 10 --initial-prompt`` from an older
+    run script and switched English to large-v3 — all three measured worse in the
+    n=15 sweep. Warn (not fail): the anti-collapse retry legitimately uses them.
+    """
+    off = []
+    if args.beam_size != 5:
+        off.append(f"--beam-size {args.beam_size} (adopted: 5; beam 10 loses recall)")
+    if args.initial_prompt or args.initial_prompt_file:
+        off.append("--initial-prompt (invents near-miss words on a first pass)")
+    if args.model != "breeze25":
+        off.append(f"--model {args.model} (adopted: breeze25; ties large-v3 on English)")
+    if not args.no_condition:
+        off.append("--condition (propagates drift / repetition)")
+    if off:
+        print("WARNING: off the adopted config (asr-benchmark 2026-07-12; see "
+              "docstring 'Production invocation'):" +
+              "".join("\n  - " + o for o in off) +
+              "\n  OK only for the anti-collapse retry or a CPU/no-local-model machine.",
+              file=sys.stderr)
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -348,7 +399,8 @@ def main() -> int:
     parser.add_argument("--initial-prompt-file", default=None,
                         help="Read initial prompt from a text file")
     parser.add_argument("--beam-size", type=int, default=5,
-                        help="Beam size (default 5; try 10 for accented/technical speech)")
+                        help="Beam size (default 5 = adopted config; 10 loses recall on a "
+                             "first pass — anti-collapse retry only)")
     parser.add_argument("--batched", dest="batched", action="store_true",
                         default=True,
                         help="Use BatchedInferencePipeline (default ON, but only "
@@ -363,7 +415,8 @@ def main() -> int:
                              "and repetition once started, for no capture gain)")
     parser.add_argument("--no-condition", dest="no_condition", action="store_true",
                         default=True,
-                        help="Disable condition_on_previous_text (--lang bilingual sets this automatically)")
+                        help="Disable condition_on_previous_text (DEFAULT; flag kept for "
+                             "backward compatibility)")
     parser.add_argument("--vad", dest="vad", action="store_true", default=False,
                         help="Re-enable VAD filtering. OFF by default since 2026-07-12: "
                              "the n=15 sweep showed VAD silently eats quiet speech "
@@ -396,6 +449,11 @@ def main() -> int:
     parser.add_argument("--retry-timeout", type=int, default=None,
                         help="Timeout (s) for the auto collapse-retry child process "
                              "(default: max(3600, 2x media duration))")
+    # Internal: set by the thin parent (see _run_parent) on the decode child.
+    parser.add_argument("--decode-only", action="store_true",
+                        help=argparse.SUPPRESS)
+    # Internal: index into attempt_plan(); the parent bumps it after an OOM child.
+    parser.add_argument("--attempt", type=int, default=0, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     # Reconcile --lang vs --language. Language is REQUIRED — guessing wrong
@@ -440,6 +498,12 @@ def main() -> int:
     transcript_json = os.path.join(output_dir, "transcript.json")
     transcript_txt = os.path.join(output_dir, "transcript.txt")
     transcript_partial = os.path.join(output_dir, "transcript.partial.json")
+    handoff_path = os.path.join(output_dir, HANDOFF_NAME)
+
+    if not args.decode_only:
+        _warn_off_default(args)
+        return _run_parent(args, output_dir, audio_path, transcript_json,
+                           handoff_path, media_path)
 
     cfg = {}
     try:
@@ -503,7 +567,13 @@ def main() -> int:
     # groq_asr._lang_for_groq maps this pipeline's vocabulary to what the API
     # accepts: bilingual -> "zh", auto -> None (omit, let it detect); zh/en and
     # any other ISO-639-1 code pass through untouched.
-    if args.engine == "groq":
+    # attempt > 0 means an earlier child already fell back to local and OOMed:
+    # Groq was tried (and rejected) then, so a relaunch goes straight to local
+    # instead of paying for the same API call again.
+    if args.engine == "groq" and args.attempt > 0:
+        log.emit("groq_skipped", status="running", attempt=args.attempt,
+                 reason="OOM relaunch — groq already tried by attempt 0")
+    if args.engine == "groq" and args.attempt == 0:
         gres: list | None = None
         try:
             from groq_asr import transcribe_groq
@@ -553,14 +623,27 @@ def main() -> int:
                     })
                 except Exception as e:
                     log.emit("runs_jsonl_write_failed", status="error", error=str(e))
+            # Same contract as the local path: written after stage_done +
+            # runs.jsonl. Without it _run_parent reads "no handoff" as a failed
+            # child and exits 1 on a finished transcript.
+            atomic_write_json(handoff_path, {
+                "n_segments": len(gres),
+                "device_cpu": False,
+                "duration_s": duration_s,
+            })
             log.close()
             return 0
 
     # ---- Audio extraction ----
     try:
-        log.emit("audio_extract", status="running")
-        extract_audio(media_path, audio_path, expected_duration_s=duration_s, log=log)
-        log.emit("audio_extract", status="success")
+        if args.attempt > 0 and os.path.isfile(audio_path) and os.path.getsize(audio_path) > 0:
+            # OOM relaunch: attempt 0 of this same parent run extracted (and
+            # validated) this audio.wav moments ago — don't ffprobe/re-extract.
+            log.emit("audio_reused", status="success", attempt=args.attempt)
+        else:
+            log.emit("audio_extract", status="running")
+            extract_audio(media_path, audio_path, expected_duration_s=duration_s, log=log)
+            log.emit("audio_extract", status="success")
     except subprocess.CalledProcessError as e:
         print(e.stderr or str(e), file=sys.stderr)
         log.stage_done(success=False,
@@ -700,7 +783,14 @@ def main() -> int:
                 transcribe_with_fallback(
                     audio_path, model_factory, decode_params,
                     language, batch_sizes_to_try, initial_prompt, log,
+                    attempt=args.attempt,
                 )
+        except OomRetry as e:
+            # Not a stage failure: the parent re-launches at e.next_attempt.
+            atomic_write_json(handoff_path + ".oom",
+                              {"next_attempt": e.next_attempt})
+            log.close()
+            return OOM_RETRY_RC
         except Exception as e:  # noqa: BLE001
             log.stage_done(success=False, error=str(e)[:500])
             log.close()
@@ -767,16 +857,15 @@ def main() -> int:
             except OSError:
                 pass
 
-    # Release the model before anything else runs: the collapse retry loads its
-    # own model in a child process, and two of them on an 8 GB card crash it.
-    # CTranslate2 frees VRAM in the model destructor, so dropping every Python
-    # reference (model, the segment generator that closes over it, and info) is
-    # the whole lever available to us — there is no explicit unload API.
-    del segments_iter
-    del info
-    if model is not None:
-        del model
-    gc.collect()
+    # ==Never destroy the model in-process (2026-10-05)==. The
+    # 2026-08-02 `del model; gc.collect()` here ran CTranslate2's destructor
+    # inside main(), i.e. BEFORE the os._exit guard, and that destructor is the
+    # 0xC0000409 abort (decisions.md §ctranslate2-abort): 3 of 4 jobs on
+    # 2026-10-03 died here with the transcript written but no stage_done. The
+    # references are parked at module level so even main()'s return does not
+    # drop them; the OS reclaims process memory + VRAM at os._exit, and the
+    # collapse retry runs in _run_parent only after this process has exited.
+    _KEEPALIVE.extend([segments_iter, info, model])
 
     wall_s = time.time() - wall_start
 
@@ -845,7 +934,97 @@ def main() -> int:
         except Exception as e:
             log.emit("runs_jsonl_write_failed", status="error", error=str(e))
 
+    # Handoff to the parent: written only after stage_done + runs.jsonl, so its
+    # presence means "transcript complete and recorded" even if this process
+    # still aborts on the way out.
+    atomic_write_json(handoff_path, {
+        "n_segments": len(results),
+        "device_cpu": os.environ.get("LECTURE_ASR_DEVICE", "").lower() == "cpu",
+        "duration_s": duration_s,
+    })
+    log.close()
+    return 0
+
+
+def _run_parent(args, output_dir, audio_path, transcript_json, handoff_path,
+                media_path) -> int:
+    """Thin parent: never imports CTranslate2.
+
+    Runs the decode in a child (`--decode-only`), which writes the transcript,
+    stage_done and runs.jsonl and then os._exit()s WITHOUT destroying the model.
+    Only after that child is gone — and its VRAM with it — does the collapse
+    retry start, so two Whisper models never share the card.
+    """
+    try:
+        os.remove(handoff_path)   # stale marker from an earlier run
+    except OSError:
+        pass
+    oom_path = handoff_path + ".oom"
+    attempt = 0
+    while True:
+        try:
+            os.remove(oom_path)
+        except OSError:
+            pass
+        cmd = [sys.executable, os.path.abspath(__file__), *sys.argv[1:],
+               "--decode-only", "--keep-audio", "--attempt", str(attempt)]
+        rc = subprocess.run(cmd).returncode
+        nxt = None
+        if rc == OOM_RETRY_RC and os.path.isfile(oom_path):
+            try:
+                with open(oom_path, encoding="utf-8") as f:
+                    nxt = int(json.load(f)["next_attempt"])
+            except (OSError, ValueError, KeyError, TypeError):
+                nxt = None
+            try:
+                os.remove(oom_path)
+            except OSError:
+                pass
+        if nxt is None or nxt <= attempt:
+            break
+        # The OOMed child has exited, so its VRAM is back before the retry.
+        print(f"[transcribe] decode OOM at attempt {attempt}; relaunching "
+              f"decode process at attempt {nxt}", file=sys.stderr)
+        attempt = nxt
+    handoff = None
+    if os.path.isfile(handoff_path):
+        try:
+            with open(handoff_path, encoding="utf-8") as f:
+                handoff = json.load(f)
+        except (OSError, ValueError):
+            handoff = None
+        try:
+            os.remove(handoff_path)
+        except OSError:
+            pass
+    if handoff is None:
+        # Failure before the transcript was recorded: the child already wrote
+        # stage_done(success=False) where it could. Keep audio for diagnosis.
+        return rc if rc != 0 else 1
+    if rc != 0:
+        # Transcript + stage_done are on disk; only the exit path died.
+        print(f"[transcribe] decode child exit {rc} AFTER recording the "
+              f"transcript ({handoff.get('n_segments')} segments) — treating "
+              "as success", file=sys.stderr)
+
     # ---- Auto-detect token collapse and retry ----
+    duration_s = handoff.get("duration_s")
+    try:
+        with open(transcript_json, encoding="utf-8") as f:
+            results = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"[transcribe] cannot re-read {transcript_json}: {e}",
+              file=sys.stderr)
+        results = []
+    if not results or not os.path.isfile(audio_path):
+        # Groq path (no local audio) or nothing to check.
+        print("[transcribe] collapse retry skipped (no transcript or no audio)",
+              file=sys.stderr)
+        return 0
+    model_ref = args.model
+    retry_env = dict(os.environ)
+    if handoff.get("device_cpu"):
+        retry_env["LECTURE_ASR_DEVICE"] = "cpu"
     # Whisper sometimes falls into 1-token-per-segment loops on accented or
     # mixed audio. Detect + auto-retranscribe so the pipeline doesn't silently
     # ship a broken transcript.
@@ -871,14 +1050,13 @@ def main() -> int:
             # parent waits with no timeout.
             timeout_s = args.retry_timeout or int(max(3600, (duration_s or 0) * 2))
             try:
-                rc = subprocess.run(cmd, timeout=timeout_s).returncode
+                rc = subprocess.run(cmd, timeout=timeout_s,
+                                    env=retry_env).returncode
             except subprocess.TimeoutExpired:
                 rc = -1
                 print(f"[transcribe] retranscribe child exceeded {timeout_s}s and "
                       "was killed; the transcript still has its original text for "
                       "those ranges", file=sys.stderr)
-                log.emit("retranscribe_timeout", status="error",
-                         timeout_s=timeout_s)
             if rc != 0:
                 print(f"[transcribe] retranscribe exit {rc}; transcript may still "
                       "have collapses", file=sys.stderr)
@@ -894,7 +1072,6 @@ def main() -> int:
         except OSError:
             pass
 
-    log.close()
     return 0
 
 

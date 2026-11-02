@@ -185,15 +185,17 @@ def build_plan(buckets, in_dir, out_dir):
             f_out = (os.path.join(out_dir, "asr",
                                   os.path.splitext(os.path.basename(f))[0])
                      if multi else out_dir)
+            # Bare defaults = the adopted config (asr-benchmark 2026-07-12); the
+            # old --batch-size 3 --beam-size 10 lost recall and got copied forward.
             add(f"transcribe {os.path.basename(f)}",
-                "local faster-whisper, 0 Claude tokens. --lang is mandatory."
+                "local faster-whisper, 0 Claude tokens. --lang is mandatory; "
+                "add no tuning flags (bare defaults are the adopted config)."
                 + (" Separate out-dir per source: they all write transcript.json."
                    if multi else ""),
                 f'python {_q(os.path.join(scripts, "transcribe_video.py"))} '
-                f'{_q(f)} --output-dir {_q(f_out)} --lang <LANG> '
-                f'--batch-size 3 --beam-size 10',
+                f'{_q(f)} --output-dir {_q(f_out)} --lang <LANG>',
                 argv=_py("transcribe_video.py", f, "--output-dir", f_out,
-                         "--lang", "<LANG>", "--batch-size", 3, "--beam-size", 10),
+                         "--lang", "<LANG>"),
                 reads=[f], writes=[f_out], gpu=True)
         first_speech = speech_files[0]
         asr_dir = (os.path.join(out_dir, "asr",
