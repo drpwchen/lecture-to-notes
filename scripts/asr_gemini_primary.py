@@ -30,7 +30,7 @@ import argparse, datetime as dt, json, os, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from _common import write_transcript_lines  # noqa: E402
+from _common import contained_path, require_network_allowed, write_transcript_lines  # noqa: E402
 
 TV = os.path.join(HERE, "transcribe_video.py")
 GA = os.path.join(HERE, "gemini_asr.py")
@@ -51,9 +51,10 @@ def main():
     ap.add_argument("--via", choices=["agy", "api"], help="passed to gemini_asr.py (default: its own --via default)")
     ap.add_argument("--extra", nargs=argparse.REMAINDER, default=[], help="extra args for the breeze25 fallback")
     a = ap.parse_args()
+    require_network_allowed("send audio to Gemini (asr_gemini_primary.py)")   # before the local anchor run
     d = a.output_dir
     os.makedirs(d, exist_ok=True)
-    anc_txt = os.path.join(d, "transcript_anchor.txt")
+    anc_txt = contained_path(d, "transcript_anchor.txt")
 
     # 1. anchor (kept apart from transcript.* so transcribe_video's "already done" check never sees it)
     if not os.path.exists(anc_txt):
@@ -81,11 +82,20 @@ def main():
     src = {"at": dt.datetime.now().isoformat(timespec="seconds"), "anchor": a.anchor_model if os.path.exists(anc_txt) else None}
 
     if segs:   # 3. promote
-        with open(os.path.join(d, "transcript.json"), "w", encoding="utf-8") as f:
+        with open(contained_path(d, "transcript.json"), "w", encoding="utf-8") as f:
             json.dump(segs, f, ensure_ascii=False, indent=1)
-        write_transcript_lines(segs, os.path.join(d, "transcript.txt"))
+        write_transcript_lines(segs, contained_path(d, "transcript.txt"))
         n_fill = sum(s.get("source") != "gemini" for s in segs)
         src.update(primary="gemini", lines=len(segs), filled_lines=n_fill, fill_model=a.fill_model if n_fill else None)
+        try:
+            from provenance import record
+            record(d, "transcribe", [os.path.join(d, "transcript.json"), os.path.join(d, "transcript.txt")],
+                   [a.media, gj, anc_txt], tool="asr_gemini_primary.py", provider="gemini",
+                   engine="gemini" + (f"-{a.via}" if a.via else ""), network="internet",
+                   params={"lang": a.lang, "anchor_model": src["anchor"], "fill_model": a.fill_model,
+                           "lines": len(segs), "filled_lines": n_fill})
+        except Exception as e:  # noqa: BLE001 — provenance must never fail the run
+            print(f"WARNING: provenance not recorded ({e})", flush=True)
     else:      # 4. fallback
         print(f"Gemini gave no transcript (rc={grc}) -> local {a.fill_model} for the whole file", flush=True)
         tj = os.path.join(d, "transcript.json")
@@ -98,7 +108,7 @@ def main():
             print(f"local {a.fill_model} failed too (rc={rc})", flush=True)
             return 1
         src.update(primary=a.fill_model, reason=f"gemini_asr rc={grc}")
-    with open(os.path.join(d, "transcript_source.json"), "w", encoding="utf-8") as f:
+    with open(contained_path(d, "transcript_source.json"), "w", encoding="utf-8") as f:
         json.dump(src, f, ensure_ascii=False, indent=1)
     print("transcript_source:", json.dumps(src, ensure_ascii=False), flush=True)
     return 0

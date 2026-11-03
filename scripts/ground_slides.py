@@ -29,7 +29,8 @@ import re
 import sys
 import time
 
-from _common import atomic_write_json, load_segments
+from _common import atomic_write_json, contained_path, die_on_unsafe_path, load_segments
+from provenance import record as record_provenance
 
 
 # --------------------------- optional deps ------------------------------------
@@ -367,8 +368,8 @@ def load_transcript(out_dir):
     be 0, which downstream tiering reads as "the speaker skipped this slide" —
     a confident wrong answer indistinguishable from a real one.
     """
-    plain = os.path.join(out_dir, "transcript.json")
-    clean = os.path.join(out_dir, "transcript_clean.json")
+    plain = contained_path(out_dir, "transcript.json")
+    clean = contained_path(out_dir, "transcript_clean.json")
     path = plain if os.path.isfile(plain) else clean
     if not os.path.isfile(path):
         print(f"ERROR: no transcript found in {out_dir} (looked for "
@@ -379,6 +380,7 @@ def load_transcript(out_dir):
     return load_segments(path)
 
 
+@die_on_unsafe_path
 def main():
     parser = argparse.ArgumentParser(description="Stage E: transcript grounding")
     parser.add_argument("out_dir", help="Lecture output directory")
@@ -390,8 +392,8 @@ def main():
                         help="Overwrite output (default behavior)")
     args = parser.parse_args()
 
-    vlm_path = os.path.join(args.out_dir, "slides_vlm.json")
-    out_path = os.path.join(args.out_dir, "slides_grounded.json")
+    vlm_path = contained_path(args.out_dir, "slides_vlm.json")
+    out_path = contained_path(args.out_dir, "slides_grounded.json")
 
     if not os.path.isfile(vlm_path):
         print(f"ERROR: {vlm_path} not found. Run ocr_slides.py first.", file=sys.stderr)
@@ -436,6 +438,13 @@ def main():
               f"dom={sig['retrieval']['clinical_domain']}")
 
     atomic_write_json(out_path, grounded)
+    _tj = os.path.join(args.out_dir, "transcript.json")
+    record_provenance(args.out_dir, "ground", [out_path],
+                      [vlm_path, _tj if os.path.isfile(_tj)
+                       else os.path.join(args.out_dir, "transcript_clean.json")],
+                      tool="ground_slides.py", engine="rapidfuzz" if fuzz_lib else "python",
+                      params={"window_seconds": args.window_seconds,
+                              "config": "custom" if args.config else "default"})
 
     elapsed = time.time() - start
     canonical_count = sum(1 for s in grounded if s.get("dedup", {}).get("is_canonical"))

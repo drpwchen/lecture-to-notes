@@ -73,7 +73,8 @@ except ImportError:
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
-from _common import atomic_write_json  # noqa: E402
+from _common import atomic_write_json, contained_path, die_on_unsafe_path  # noqa: E402
+from provenance import record as record_provenance  # noqa: E402
 
 try:
     from _log import StageLogger
@@ -456,7 +457,7 @@ def process_slide(slide, slides_dir, model, num_ctx,
     Sets vlm_skip=False on success/failure paths (caller handles the
     skip path before this function).
     """
-    img_path = os.path.join(slides_dir, slide["filename"])
+    img_path = contained_path(slides_dir, slide["filename"], what="slide filename")
     slide["vlm_skip"] = False
     slide["skip_reason"] = None
 
@@ -552,6 +553,7 @@ def process_slide(slide, slides_dir, model, num_ctx,
 # Main
 # ----------------------------------------------------------------------
 
+@die_on_unsafe_path
 def main():
     parser = argparse.ArgumentParser(description="Stage D: VLM enrichment with pre-skip gate")
     parser.add_argument("out_dir", help="Lecture output directory")
@@ -612,9 +614,9 @@ def main():
         sys.exit(1)
     atexit.register(lambda: _lease_cm.__exit__(None, None, None))
 
-    dedup_path = os.path.join(args.out_dir, "slides_dedup.json")
-    slides_dir = os.path.join(args.out_dir, "slides")
-    out_path = os.path.join(args.out_dir, "slides_vlm.json")
+    dedup_path = contained_path(args.out_dir, "slides_dedup.json")
+    slides_dir = contained_path(args.out_dir, "slides")
+    out_path = contained_path(args.out_dir, "slides_vlm.json")
 
     if not os.path.isfile(dedup_path):
         print(f"ERROR: {dedup_path} not found. Run dedup_semantic.py first.",
@@ -857,6 +859,15 @@ def main():
 
     # Atomic: 20+ minutes of GPU work must not be lost to a truncated write.
     atomic_write_json(out_path, results)
+    from urllib.parse import urlparse
+    _host = (urlparse(OLLAMA_URL).hostname or "").lower()
+    record_provenance(args.out_dir, "vlm", [out_path], [dedup_path, slides_dir],
+                      tool="vlm_signals.py", engine="ollama", model=args.model,
+                      network="loopback" if _host in ("127.0.0.1", "localhost", "::1") else "remote",
+                      params={"num_ctx": args.num_ctx, "skip_gate": not args.no_skip_gate,
+                              "resume": bool(args.resume), "n_canonical": len(canonical),
+                              "n_vlm_called": n_vlm_called, "n_vlm_failed": n_vlm_failed,
+                              "n_skipped": n_skipped, "n_resumed": len(resume_done_ids)})
 
     elapsed = time.time() - start
     print(f"\nDone: {n_vlm_called} VLM calls "
@@ -882,7 +893,7 @@ def main():
     # carry-forwards) so a course that's legitimately mostly pre-skip doesn't
     # false-trip. slides_vlm.json is already fully written above, so a resume run
     # (--resume) re-attempts only the failed slides and clears the flag on pass.
-    flag_path = os.path.join(args.out_dir, "_vlm_failed_ratio.flag")
+    flag_path = contained_path(args.out_dir, "_vlm_failed_ratio.flag")
     if n_vlm_called > 0:
         fail_ratio = n_vlm_failed / n_vlm_called
         if fail_ratio > VLM_FAIL_RATIO_THRESHOLD:

@@ -40,7 +40,8 @@ except Exception:
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
-from _common import load_config, parse_tier  # noqa: E402
+from _common import die_on_unsafe_path, load_config, parse_tier, safe_basename  # noqa: E402
+from provenance import record as record_provenance, snapshot as provenance_snapshot  # noqa: E402
 
 PLACEHOLDER = re.compile(r"\[\[EMBED\s+s(\d+)(?:\s*:\s*([^\]]+?))?\s*\]\]")
 DEFAULT_ATTACH_ROOT = "99Attachment/lecture_{slug}"
@@ -99,7 +100,9 @@ def attachment_name(s, missing_names):
     if not name:
         name = f"s{int(s['slide_id']):02d}.jpg"
         missing_names.append(int(s["slide_id"]))
-    return name
+    # Stage F (an LLM) writes attachment_name; finalize_to_vault.py later copies a
+    # file under exactly this name, so a path in it must be refused here already.
+    return safe_basename(name, what=f"slides_final.json s{s.get('slide_id')} attachment name")
 
 
 def callout(attach_root, s, intent, missing_names):
@@ -132,6 +135,7 @@ def resolve_note_paths(lec, note_arg, in_place):
     return src, dst
 
 
+@die_on_unsafe_path
 def main():
     ap = argparse.ArgumentParser(
         description="Expand [[EMBED sN]] placeholders -> Obsidian callouts + audit",
@@ -157,6 +161,7 @@ def main():
     by_id = load_final(lec)
     note_path, dst = resolve_note_paths(lec, args.note, args.in_place)
 
+    prov_inputs = provenance_snapshot([note_path, os.path.join(lec, "slides_final.json")], lec)
     with open(note_path, encoding="utf-8") as fh:
         lines = fh.read().splitlines()
     out, referenced, removed, inline = [], set(), [], 0
@@ -245,6 +250,12 @@ def main():
         print("[dry-run] not writing"); return
     with open(dst, "w", encoding="utf-8") as f:
         f.write(rendered)
+    record_provenance(lec, "render_embeds", [dst], prov_inputs, tool="render_embeds.py",
+                      engine="python", params={"attach_root": attach_root,
+                                               "in_place": bool(args.in_place),
+                                               "n_embeds": len(referenced),
+                                               "n_removed": len(removed),
+                                               "n_missing_tier12": len(missing)})
     print(f"-> {dst}")
 
 

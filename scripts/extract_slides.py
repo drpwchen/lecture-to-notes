@@ -36,10 +36,10 @@ except Exception:
     pass
 
 try:
-    from _common import fmt_hms, require_binaries
+    from _common import contained_path, die_on_unsafe_path, fmt_hms, require_binaries
 except ImportError:  # running the file from another cwd without scripts/ on path
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from _common import fmt_hms, require_binaries
+    from _common import contained_path, die_on_unsafe_path, fmt_hms, require_binaries
 
 # Files this script itself creates inside slides/. Anything else in there was put
 # there by a human or another tool (e.g. crop_multiup_pdf.py's slide_*.jpg) and
@@ -85,7 +85,7 @@ def prepare_slides_dir(output_dir):
     delete someone else's work — the old code unconditionally removed every
     .jpg/.json/.txt in the folder.
     """
-    slides_dir = os.path.join(output_dir, "slides")
+    slides_dir = contained_path(output_dir, "slides")
     os.makedirs(slides_dir, exist_ok=True)
 
     entries = os.listdir(slides_dir)
@@ -241,6 +241,7 @@ def dedup_frames(frame_files, slides_dir, interval, threshold=40,
     return unique_slides
 
 
+@die_on_unsafe_path
 def main():
     parser = argparse.ArgumentParser(description="Stage A: extract slides from video")
     parser.add_argument("video_path", help="Path to video file")
@@ -304,7 +305,7 @@ def main():
     print(f"Deduplicated: {len(frame_files)} frames → {len(unique_slides)} unique slides")
 
     # Step 3: Save metadata
-    ts_path = os.path.join(slides_dir, "timestamps.json")
+    ts_path = contained_path(slides_dir, "timestamps.json")
     with open(ts_path, "w", encoding="utf-8") as f:
         json.dump(unique_slides, f, ensure_ascii=False, indent=2)
 
@@ -323,6 +324,15 @@ def main():
         print(f"  Slide {s['slide']:2d}: [{fmt_hms(s['first_ts'])}-{s['time_str']}] "
               f"{s['filename']} ({s['group_size']} frames)")
 
+    try:
+        from provenance import record
+        record(output_dir, "extract_slides", [slides_dir], [args.video_path],
+               tool="extract_slides.py", engine="ffmpeg+phash",
+               params={"interval": args.interval, "hash_threshold": args.hash_threshold,
+                       "group_drift_threshold": args.group_drift_threshold,
+                       "n_frames": len(frame_files), "n_slides": len(unique_slides)})
+    except Exception as e:  # noqa: BLE001 — provenance must never fail the stage
+        print(f"WARNING: provenance not recorded ({e})", file=sys.stderr)
     print(f"\nDone: {len(unique_slides)} slides → {ts_path}")
 
 

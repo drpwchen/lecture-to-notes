@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,139 @@ def _die(msg: str) -> None:
     'bad input / bad environment' code, as used by every stage script)."""
     print(msg, file=sys.stderr)
     sys.exit(2)
+
+
+# ----------------------------------------------------------------------
+# Path containment (0.10.0)
+# ----------------------------------------------------------------------
+# A directory given on the command line (the lecture dir, --out, --vault-root)
+# is the APPROVED root: the user chose it. A name that comes out of a data file
+# is not — a segment slug and an L3 note are written by an LLM (Stage F), an
+# `attachment_name` too, a manifest clip path by whoever built the course, an
+# embed target by whatever the note says. Every such name is joined through
+# `contained_path` (sub-directories allowed) or checked with `safe_basename`
+# (one plain component) before anything is read or written with it. Nothing is
+# sanitized into a different name: a valid name passes unchanged, so outputs
+# stay byte-identical, and an invalid one is refused.
+
+class UnsafePathError(ValueError):
+    """A data-derived path would leave its approved root, or is not a plain name."""
+
+
+_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+_WIN_DEVICE_RE = re.compile(r"^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$", re.I)
+_SEP_RE = re.compile(r"[/\\]")
+
+
+def safe_basename(name: Any, what: str = "file name") -> str:
+    """Return ``name`` unchanged if it is ONE plain path component, else raise.
+
+    Refused: empty, ``.``/``..``, any ``/`` or ``\\``, a drive (``C:``) or any
+    ``:`` (an NTFS alternate data stream on Windows), control characters, and
+    Windows device names (``CON``, ``NUL.md``, ``COM1``…).
+    """
+    if not isinstance(name, str) or not name:
+        raise UnsafePathError(f"{what}: {name!r} is not a non-empty string")
+    if name in (".", ".."):
+        raise UnsafePathError(f"{what}: {name!r} is a directory reference, not a name")
+    if _SEP_RE.search(name):
+        raise UnsafePathError(f"{what}: {name!r} contains a path separator")
+    if ":" in name:
+        raise UnsafePathError(f"{what}: {name!r} contains ':' (drive / alternate data stream)")
+    if any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise UnsafePathError(f"{what}: {name!r} contains a control character")
+    if _WIN_DEVICE_RE.match(name):
+        raise UnsafePathError(f"{what}: {name!r} is a Windows device name")
+    return name
+
+
+def _norm_real(p: str) -> str:
+    return os.path.normcase(os.path.realpath(p))
+
+
+def is_within(root: Any, path: Any) -> bool:
+    """True if ``path`` resolves (symlinks/junctions followed) to ``root`` or below."""
+    r, p = _norm_real(os.fspath(root)), _norm_real(os.fspath(path))
+    try:
+        return os.path.commonpath([r, p]) == r
+    except ValueError:  # different drives on Windows
+        return False
+
+
+def contained_path(root: Any, *parts: Any, what: str = "path") -> Any:
+    """Join ``parts`` under ``root`` and return the joined path — refusing escapes.
+
+    Each part may hold sub-directories (``"L2/x.md"``) but no absolute path, no
+    drive, no ``..`` component and no control character; the joined result must
+    also resolve inside ``root`` after following symlinks/junctions, so a
+    planted link cannot redirect a write. The return value is the plain
+    ``os.path.join`` (not the resolved path) so printed paths and anything
+    derived from them are unchanged. ``root`` may be a str or a Path; the result
+    has the same type.
+    """
+    from pathlib import PurePath
+    if not parts:
+        raise UnsafePathError(f"{what}: nothing to join under {os.fspath(root)!r}")
+    clean = []
+    for part in parts:
+        part = os.fspath(part) if isinstance(part, PurePath) else part
+        if not isinstance(part, str) or not part:
+            raise UnsafePathError(f"{what}: {part!r} is not a non-empty string")
+        if os.path.isabs(part) or _DRIVE_RE.match(part) or part[0] in "/\\":
+            raise UnsafePathError(f"{what}: {part!r} is an absolute path")
+        for comp in _SEP_RE.split(part):
+            if comp == "..":
+                raise UnsafePathError(f"{what}: {part!r} climbs out with '..'")
+            if any(ord(c) < 32 for c in comp):
+                raise UnsafePathError(f"{what}: {part!r} contains a control character")
+        clean.append(part)
+    joined = os.path.join(os.fspath(root), *clean)
+    if not is_within(root, joined):
+        raise UnsafePathError(f"{what}: {joined!r} resolves outside {os.fspath(root)!r} "
+                              "(symlink or junction?)")
+    return type(root)(joined) if isinstance(root, PurePath) else joined
+
+
+def die_on_unsafe_path(main: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator for a stage's ``main``: an UnsafePathError becomes exit 2 + message."""
+    import functools
+
+    @functools.wraps(main)
+    def wrapper(*a: Any, **kw: Any) -> Any:
+        try:
+            return main(*a, **kw)
+        except UnsafePathError as e:
+            _die(f"ERROR: refusing unsafe path — {e}")
+    return wrapper
+
+
+# ----------------------------------------------------------------------
+# Local-only mode (0.10.0)
+# ----------------------------------------------------------------------
+
+def local_only() -> bool:
+    """True when env ``LECTURE_LOCAL_ONLY`` is truthy or config ``privacy.local_only``."""
+    v = (os.environ.get("LECTURE_LOCAL_ONLY") or "").strip().lower()
+    if v:
+        return v not in ("0", "false", "no", "off")
+    try:
+        cfg = load_config()
+    except Exception:  # noqa: BLE001 — unreadable config: the env var still works
+        return False
+    return bool((cfg.get("privacy") or {}).get("local_only"))
+
+
+def require_network_allowed(what: str) -> None:
+    """Fail closed (exit 2) before anything is sent out while local-only mode is on.
+
+    No stage ever falls back from local to a cloud service; this guard is for
+    the explicit cloud routes (``--engine groq``, Gemini), so a run started
+    with ``LECTURE_LOCAL_ONLY=1`` cannot upload audio through a mistyped flag.
+    """
+    if local_only():
+        _die(f"ERROR: local-only mode is on (LECTURE_LOCAL_ONLY / config "
+             f"privacy.local_only) — refusing to {what}. Unset it to allow the "
+             "upload, or use the local engine.")
 
 
 # ----------------------------------------------------------------------

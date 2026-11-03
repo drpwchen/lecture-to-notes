@@ -13,6 +13,9 @@ Output → <xlf_dir>/_L1/  (NOT the vault):
 """
 import json, os, sys, glob, shutil
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from _common import contained_path  # noqa: E402
+
 # text lines a deck slide keeps in L1 (a video frame keeps 6)
 DECK_TEXT_LINES = 24
 
@@ -93,9 +96,9 @@ def build(xlf_dir, gran, fig_dir, fig_rel):
                 labels = vs.get("visible_labels", []) or []
                 ctype = ",".join(vs.get("content_type", []) or []) or "?"
                 tag = f"c{ci:02d}_{fn}"
-                src = os.path.join(cdir, "slides", fn)
+                src = contained_path(cdir, "slides", fn, what="slide filename")
                 if os.path.exists(src) and tag not in copied:
-                    shutil.copy2(src, os.path.join(fig_dir, tag))
+                    shutil.copy2(src, contained_path(fig_dir, tag, what="figure name"))
                     copied.add(tag)
                 mark = "" if canon else " ·近似帧"
                 if o.get("vlm_skip"):
@@ -138,9 +141,9 @@ def build(xlf_dir, gran, fig_dir, fig_rel):
             for p in pages:
                 fn = p.get("filename", "")
                 tag = f"deck_{deck_name}_{fn}"
-                src = os.path.join(decks_root, deck_name, "slides", fn)
+                src = contained_path(decks_root, deck_name, "slides", fn, what="deck page filename")
                 if os.path.exists(src) and tag not in copied:
-                    shutil.copy2(src, os.path.join(fig_dir, tag))
+                    shutil.copy2(src, contained_path(fig_dir, tag, what="figure name"))
                     copied.add(tag)
                 text = (p.get("ocr", {}) or {}).get("quick_text", "").strip()
                 out.append(f"\n**📄 p.{p.get('slide_id', '?')} — {fn}**")

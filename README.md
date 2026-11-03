@@ -206,9 +206,18 @@ Honest version:
       Whether a script that an AI agent launches counts as "direct" is not
       settled. Check the current FAQ; if in doubt, use `api`.
     Audio leaves your machine on both routes — non-confidential recordings
-    only.
+    only. `LECTURE_LOCAL_ONLY=1` (or `privacy.local_only: true` in
+    `config.yaml`) makes the Groq and Gemini routes exit before anything is
+    uploaded; no stage ever falls back from local to cloud on its own.
+  - **Bring a transcript from elsewhere** — MLX Whisper, a hosted STT service,
+    creator captions, a human transcript: `scripts/import_transcript.py`
+    converts SRT, WebVTT or whisper-style JSON into the pipeline's
+    `transcript.json` ([contract](docs/transcript-contract.md)) and Stage 0 is
+    skipped.
   - **Apple Silicon** should work in CPU mode (faster-whisper on CPU, ollama
-    is native on macOS) — plausible but untested; reports welcome.
+    is native on macOS), or with MLX Whisper's output imported as above —
+    plausible but untested; there is no Apple Silicon resource profile in the
+    GPU pre-flight yet. Reports welcome.
 - **`ffmpeg` and `ffprobe` on PATH** — not optional.
 - Optional: [ollama](https://ollama.com) with `minicpm-v:8b` for Stage D slide
   semantics; a separate venv with [Surya](https://github.com/VikParuchuri/surya)
@@ -274,7 +283,9 @@ That is most of the value and all of the local compute.
 `synthesize.py` you can run. If you are not using an agent driver, treat
 `slides_grounded.json` as the handoff point and write your own Stage F against
 whatever model you prefer — the spec tells you what the output has to satisfy,
-and `audit_note.py` mechanically checks it.
+and `audit_note.py` mechanically checks it. [`docs/stage-f-contract.md`](docs/stage-f-contract.md)
+is that contract without any provider in it: inputs, the output files and their
+keys, and which script checks what afterwards.
 
 ## Repo layout
 
@@ -294,7 +305,8 @@ and `audit_note.py` mechanically checks it.
 | `ocr_bench/` | OCR engine A/B/C harness — bring your own fixtures |
 | `data/` | Word/acronym frequency lists used to flag suspect ASR tokens |
 | `docs/AUDIT_SUMMARY.md` | What the pre-release audit found, and two things it got wrong |
-| `docs/transcript-contract.md` | What `transcript.json` must contain for an external ASR / transcript importer |
+| `docs/transcript-contract.md` | What `transcript.json` must contain; `import_transcript.py` for an external ASR |
+| `docs/stage-f-contract.md` | Stage F (synthesis) inputs, outputs and gates, for any LLM |
 | `SECURITY.md` | How to report a vulnerability privately |
 | `tools/sync_from_skill.py` | Maintenance: re-export from the upstream skill tree |
 
@@ -315,6 +327,14 @@ and `audit_note.py` mechanically checks it.
 - **Every stage output is a superset of the previous one**, so you can re-run one
   stage without redoing transcription or frame extraction. Keep the
   intermediates; they are how tier decisions get debugged.
+- **Every artifact says what made it.** Each stage records tool, engine, model,
+  parameters, network use and input hashes in `provenance.json` next to its
+  output; `python scripts/provenance.py verify <dir>` flags a file edited after
+  its stage wrote it, or built from an input that has changed since.
+- **Names from data files never become paths.** A slug, an `attachment_name` or
+  an embed target comes from a JSON file or an LLM-written note; it is checked to
+  stay inside the directory you gave on the command line (symlinks followed)
+  and refused otherwise — never rewritten into some other name.
 
 ## Provenance and defaults
 

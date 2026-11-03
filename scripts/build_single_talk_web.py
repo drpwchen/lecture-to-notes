@@ -55,6 +55,9 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from _common import UnsafePathError, contained_path, die_on_unsafe_path, safe_basename  # noqa: E402
 
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".m4v", ".mts", ".m2ts", ".webm")
 
@@ -96,6 +99,11 @@ def load_plan(path):
             "region": r.get("region", ""), "type": r.get("type", "lecture"),
         })
     rows.sort(key=lambda r: r["seg"])
+    for r in rows:   # the slug names L2/L3 files — one plain component, never a path
+        try:
+            safe_basename(str(r["slug"]), what=f"plan seg {r['seg']} slug")
+        except UnsafePathError as e:
+            raise SystemExit(f"ERROR: {e}")
     slugs = [r["slug"] for r in rows]
     if len(set(slugs)) != len(slugs):
         raise SystemExit("ERROR: duplicate slugs in plan")
@@ -132,16 +140,21 @@ def slice_l2(transcript, start, end):
             for b, txts in sorted(buckets.items())]
 
 
+WRITTEN = []   # files this run actually wrote (for provenance.json)
+
+
 def write_once(path, content, force):
     if os.path.exists(path) and not force:
         print(f"  keep     {os.path.relpath(path)}  (exists — --force to overwrite)")
         return False
+    WRITTEN.append(path)
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(content)
     print(f"  wrote    {os.path.relpath(path)}")
     return True
 
 
+@die_on_unsafe_path
 def main():
     ap = argparse.ArgumentParser(
         description="Assemble a single-talk lecture dir for export_web.py "
@@ -165,13 +178,15 @@ def main():
     A = ap.parse_args()
 
     course = os.path.abspath(A.course)
-    tpath = os.path.join(course, "transcript.json")
+    tpath = contained_path(course, "transcript.json")
     if not os.path.isfile(tpath):
         raise SystemExit(f"ERROR: {tpath} not found — transcribe first (Step 4)")
     with open(tpath, encoding="utf-8") as fh:
         transcript = json.load(fh)
 
+    A.plan = os.path.abspath(A.plan)   # main() chdirs into the course below
     rows = load_plan(A.plan)
+    safe_basename(A.hub_slug, what="--hub-slug")
     video = pick_video(course, A.video)
     vbase = os.path.basename(video)
     name = A.name or os.path.basename(course)
@@ -191,7 +206,7 @@ def main():
                 "course_type": A.course_type or max(
                     (r["type"] for r in rows),
                     key=[r["type"] for r in rows].count)}
-    write_once(os.path.join(course, "_raw", "manifest.json"),
+    write_once(contained_path(course, "_raw", "manifest.json"),
                json.dumps(manifest, ensure_ascii=False, indent=2), A.force)
 
     segments = [{
@@ -212,7 +227,7 @@ def main():
             "time": f"00:00–{fmt_mmss(t_end)}",
         }
         segments.append(overview)
-    write_once(os.path.join(course, "_intermediate", "seg", "segments.json"),
+    write_once(contained_path(course, "_intermediate", "seg", "segments.json"),
                json.dumps(segments, ensure_ascii=False, indent=2), A.force)
 
     n_bullets = 0
@@ -227,7 +242,7 @@ def main():
               f"> [!info] 本機 whisper 轉錄，==未經人工逐字校對==；"
               f"英文術語有辨識誤差，正確用詞以整理稿為準。\n\n"
               + "\n".join(bullets) + "\n")
-        write_once(os.path.join(course, "L2", f"L2_seg{r['seg']:02d}_{r['slug']}.md"),
+        write_once(contained_path(course, "L2", f"L2_seg{r['seg']:02d}_{r['slug']}.md"),
                    l2, A.force)
 
     table = "\n".join(
@@ -237,7 +252,16 @@ def main():
            + (f"- 日期：{A.date}\n" if A.date else "")
            + f"- 錄影長度：{fmt_mmss(t_end)}\n\n"
            f"| 段 | 時間 | 主題 | 分類 |\n|---|---|---|---|\n{table}\n")
-    write_once(os.path.join(course, f"_HUB_{A.hub_slug}.md"), hub, A.force)
+    write_once(contained_path(course, f"_HUB_{A.hub_slug}.md"), hub, A.force)
+    if WRITTEN:
+        try:
+            from provenance import record
+            record(course, "single_talk_assemble", WRITTEN, [tpath, A.plan],
+                   tool="build_single_talk_web.py", engine="python",
+                   params={"n_segments": len(segments), "overview": overview is not None,
+                           "video": vbase, "force": bool(A.force)})
+        except Exception as e:  # noqa: BLE001 — provenance must never fail the stage
+            print(f"WARNING: provenance not recorded ({e})", file=sys.stderr)
 
     want_l3 = rows + ([overview] if overview else [])
     missing_l3 = [f"L3_seg{r['seg']:02d}_{r['slug']}.md" for r in want_l3

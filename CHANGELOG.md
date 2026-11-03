@@ -3,6 +3,110 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] — 2026-11-03 — path containment, provenance manifest, transcript importer
+
+Follow-up to [issue #1](https://github.com/drpwchen/lecture-to-notes/issues/1):
+points 5 (workspace containment), 8 (provenance / local-only), 1 (generic
+transcript importer) and the provider-neutral Stage F contract. Point 2 (Apple
+Silicon / MLX profile) still needs someone with a Mac — see below.
+
+### Added
+
+- **`scripts/import_transcript.py`** — an external transcript (MLX Whisper, a hosted
+  STT service, creator captions, a human transcript) becomes the pipeline's
+  `transcript.json` + `transcript.txt` (`docs/transcript-contract.md`), so Stage 0 is
+  skipped. Reads SubRip, WebVTT (NOTE/STYLE blocks, cue settings, `<v>` voices kept as
+  `speaker`) and whisper-style JSON (`{"segments": [...]}` or a bare list, with word
+  timings when every word has them); other JSON shapes via `--list-key` /
+  `--start-key` / `--end-key` / `--text-key` / `--time-unit ms`; `--offset` for a later
+  chunk. Follows the contract's six rules: the source is only read (importing a file onto
+  itself is refused), an existing transcript needs `--force` (`--backup` keeps it), times
+  become float seconds, segments are sorted, and a segment with `end < start` is an error
+  with nothing written — never a silent fix. Caption styling is stripped; the words are
+  not touched. Records `engine` / `whisper_model` in `metadata.json` and `runs.jsonl` like
+  the local engine, plus `provenance.json`.
+- **`provenance.json` in every lecture dir** (`scripts/provenance.py`). Each stage that
+  writes an artifact records, per artifact: stage, tool, pipeline version, run id,
+  `provider` (`local` / `groq` / `gemini` / …), `engine`, `model`, `network`
+  (`none` / `loopback` / `internet`), its parameters, the artifact's own sha256 and the
+  sha256 of every input (media files over 256 MB by size + first/last MiB; a directory
+  such as `slides/` by one hash over its files). `python scripts/provenance.py verify
+  <dir>` reports an artifact as `modified` (not what its stage wrote) or `stale` (an input
+  changed after it was built — e.g. grounding that predates a re-transcription); exit 1
+  on either. Paths outside the lecture dir are stored as `external:<basename>`, never
+  absolute. `export_web.py` writes its own into the support folder. Stage F has no
+  script, so `provenance.py record` lets the agent record which model wrote the note.
+  Recording never fails a stage.
+- **Local-only mode**: `LECTURE_LOCAL_ONLY=1` or `config.yaml` `privacy.local_only: true`
+  makes `transcribe_video.py --engine groq`, `groq_asr.py`, `gemini_asr.py` and
+  `asr_gemini_primary.py` exit before anything is uploaded (fail closed). No stage ever
+  fell back from local to cloud; this closes the "mistyped flag" case.
+- **`docs/stage-f-contract.md`** — Stage F without any provider in it: inputs, the
+  output files and their keys (`slides_final.json`, `note_draft.md`, `L3/` files), the
+  rules no script can check, and which script fails on what afterwards. `SKILL.md`
+  is one adapter of it (Claude Code).
+
+### Security
+
+- **Names from data files can no longer leave the directory you gave.** New
+  `_common.contained_path` / `safe_basename` / `is_within`: a plan slug, Stage F's
+  `attachment_name`, an embed target in an L3 note, a `filename` in a slides JSON, a
+  manifest clip that would be moved — none may be absolute, carry a drive, `..`, `:`
+  or a control character, or resolve (symlinks and junctions followed) outside the
+  approved root. A valid name passes through **unchanged** (outputs stay
+  byte-identical); an invalid one stops the stage with exit 2 instead of being rewritten
+  into some other name. Before this release, `finalize_to_vault.py` copied a slide to
+  `attach_dir / attachment_name` as written by the LLM, so `../../x.jpg` landed outside the
+  vault's attachment folder; `export_web.py` resolved `![[../../x.jpg]]` relative to the
+  figure folder and copied whatever it found into the shareable support folder.
+- `export_web.py` moves or recycles only clips inside the course root.
+
+### Changed
+
+- Every stage that writes an artifact goes through the helper for its output paths and
+  for the data-derived input names it opens (Stages A, B, B2, C, D, E, the PDF / image
+  bridges, ASR suspects, transcription and collapse repair, the Gemini route,
+  `render_embeds`, `finalize_to_vault`, `build_single_talk_web`, `export_web`,
+  `batch/build_L1`).
+- `docs/transcript-contract.md`: the importer, `provenance.json`, refreshed file:line
+  references; an Apple Silicon / MLX section that says plainly it is untested.
+- `_log.__version__` (the build identity outside a git checkout) now follows the release.
+
+### Verified
+
+No regression on real data, compared byte for byte against 0.9.0:
+- `export_web.py` on all 84 course work dirs of this machine's archive (cloned:
+  text copied, binaries hard-linked, manifest root pointed away from the delivered
+  folders), `--no-remux`: 84/84 identical — 4,567 files including the page, timeline,
+  media map, markdown, images, `分享說明.txt` and the exporter's own stdout/stderr;
+  32,839 note blocks and 35,077 slide blocks. 83/83 new provenance files verify `ok`.
+- Per-lecture stages on 24 real lecture dirs (copies), each stage hashed after it ran: 160 stage runs —
+  grounding 24, ASR suspects 24, `render_embeds` 16, `finalize_to_vault` 16 (into a scratch vault),
+  `build_single_talk_web` 23, the PDF bridge 8, quick OCR 9 and dedup 9 (decks up to 300 frames),
+  Stage D and B2 with `--resume` where no model call was needed (15 and 16). Same exit codes and
+  same files in all 160 (5,864 files in the final trees; the only difference is the absolute course
+  path `build_single_talk_web` writes into `_raw/manifest.json`, which is the copy's own location);
+  console output identical once timings are masked. `provenance.py verify` on the results flagged
+  exactly the artifacts the test run had made stale by re-running dedup after Stage D.
+- `transcribe_video.py` (breeze25, GPU) and `extract_slides.py` on a 90-second real
+  clip: transcript (51 segments) and frames identical.
+- The importer on 23 real transcripts (10,206 segments) as JSON, as generated SRT and
+  as generated WebVTT: 23/23 identical each way; `transcript.txt` equals the canonical
+  writer's output.
+- 72 new hermetic tests (`tests/test_path_containment.py`, `test_provenance.py`,
+  `test_import_transcript.py`); the symlink cases skip on Windows without the privilege
+  and use an NTFS junction instead where possible.
+
+### Not done here
+
+- **Point 2, Apple Silicon / MLX** — no Mac to verify on. The importer is the adapter
+  interface (`--format json --engine mlx-whisper`, by mlx-whisper's documented output
+  format), but it has not been run on real MLX output, and `gpu_check.py` has no
+  unified-memory / Metal profile. Left for a contributor with the hardware.
+- **Lockfile (point 7)**: still none, for the reason given in 0.8.0 — CI exercises none
+  of the heavy dependencies, so a lock frozen on one machine would claim a tested
+  combination nobody tested.
+
 ## [0.9.0] — 2026-11-02
 
 ### Added

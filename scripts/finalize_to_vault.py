@@ -30,7 +30,7 @@ except Exception:
     pass
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import parse_tier
+from _common import contained_path, die_on_unsafe_path, parse_tier
 from _paths import VAULT_ROOT as DEFAULT_VAULT
 
 REF_RE = re.compile(r"!\[\[99Attachment/lecture_[^/]+/([^|\]]+)")
@@ -65,6 +65,7 @@ def needs_refresh(src: Path, dst: Path) -> bool:
             or int(s_st.st_mtime) != int(d_st.st_mtime))
 
 
+@die_on_unsafe_path
 def main():
     ap = argparse.ArgumentParser(description="Finalize lecture -> vault (attachments + note + audit)")
     ap.add_argument("lecture_dir")
@@ -107,7 +108,7 @@ def main():
             sys.exit(1)
 
     note_name = args.note_name or (f"{date}_{speaker}_{topic}.md" if date else f"{speaker}_{topic}.md")
-    out_note = inbox / note_name
+    out_note = contained_path(inbox, note_name, what="note name")
     # Checked BEFORE any copying: two talks by the same speaker, or a dir name
     # without a date, collide on this filename, and the old code overwrote the
     # earlier note without a word.
@@ -131,7 +132,7 @@ def main():
               "figures.", file=sys.stderr)
         sys.exit(2)
 
-    attach_dir = attach_root / f"lecture_{slug}"
+    attach_dir = contained_path(attach_root, f"lecture_{slug}", what="attachment folder")
     if not args.dry_run:
         attach_dir.mkdir(parents=True, exist_ok=True)
         inbox.mkdir(parents=True, exist_ok=True)
@@ -147,7 +148,7 @@ def main():
             print(f"  SKIP: slide entry without 'filename': {str(s)[:120]}",
                   file=sys.stderr)
             continue
-        src = lec / "slides" / fn
+        src = contained_path(lec / "slides", fn, what="slides_final.json filename")
         if not src.exists():
             print(f"  MISSING slide source: {src.name}")
             continue
@@ -164,7 +165,8 @@ def main():
                 print(f"  SKIP: {fn} has a non-numeric slide_id {sid!r}",
                       file=sys.stderr)
                 continue
-        dst = attach_dir / dst_name
+        # attachment_name is written by Stage F (an LLM): it must stay inside attach_dir.
+        dst = contained_path(attach_dir, dst_name, what="slides_final.json attachment_name")
         stale = needs_refresh(src, dst)
         if stale and dst.exists():
             refreshed.append(dst_name)
@@ -181,6 +183,13 @@ def main():
 
     if not args.dry_run:
         shutil.copy2(note_path, out_note)
+        try:
+            from provenance import record
+            record(lec, "finalize_to_vault", [out_note], [note_path, sf_path],
+                   tool="finalize_to_vault.py", engine="python",
+                   params={"n_attachments": len(copied), "n_refreshed": len(refreshed)})
+        except Exception as e:  # noqa: BLE001 — provenance must never fail the stage
+            print(f"WARNING: provenance not recorded ({e})", file=sys.stderr)
     print(f"{prefix}Note -> {out_note}")
 
     # Audit: note references must all resolve to copied attachments

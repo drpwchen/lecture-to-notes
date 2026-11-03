@@ -57,7 +57,8 @@ import os
 import re
 import sys
 
-from _common import load_segments
+from _common import contained_path, die_on_unsafe_path, load_segments
+from provenance import record as record_provenance
 
 ASCII_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9'\-]*")
 ACRONYM = re.compile(r"^[A-Z0-9]{2,6}$")
@@ -185,6 +186,7 @@ def hints(token, terms, top):
     return scored[:top]
 
 
+@die_on_unsafe_path
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -199,7 +201,7 @@ def main():
                          "(default: <skill>/data/real_acronyms.txt)")
     args = ap.parse_args()
 
-    tpath = os.path.join(args.dir, "transcript.json")
+    tpath = contained_path(args.dir, "transcript.json")
     segs = load_segments(tpath)
     real_words, real_acros = load_protected(args.wordlist, args.acronyms)
     terms, gstats = load_glossary(args.dir)
@@ -240,9 +242,16 @@ def main():
         lines.append(f"  {low!r:28} x{n:<3} seg{first:<5} ~ {hint_str}")
 
     lines += ["", f"Total suspects: {len(ordered)}"]
-    out = os.path.join(args.dir, "asr_suspects.txt")
+    out = contained_path(args.dir, "asr_suspects.txt")
     with open(out, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
+    _ins = [tpath] + [p for p in (os.path.join(args.dir, n) for n in
+                                  ("slides_grounded.json", "pdf_text.json", "slides_dedup.json"))
+                      if os.path.isfile(p)]
+    record_provenance(args.dir, "asr_suspects", [out], _ins, tool="flag_asr_suspects.py",
+                      engine="python", params={"min_len": args.min_len, "top": args.top,
+                                               "n_suspects": len(ordered),
+                                               "custom_wordlist": bool(args.wordlist or args.acronyms)})
     print("\n".join(lines[:8]))
     print(f"... {len(ordered)} suspects -> {out}")
 

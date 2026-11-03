@@ -42,8 +42,9 @@ except Exception:
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
-from _common import (atomic_write_json,  # noqa: E402
-                     gpu_lease_ctx, load_config, rapidocr_text_ex)
+from _common import (atomic_write_json, contained_path,  # noqa: E402
+                     die_on_unsafe_path, gpu_lease_ctx, load_config, rapidocr_text_ex)
+from provenance import record as record_provenance, snapshot as provenance_snapshot  # noqa: E402
 
 # Production adapter (moved out of ocr_bench/ on 2026-08-02 — production must not
 # depend on the benchmark tree).
@@ -167,6 +168,7 @@ def run_surya(surya_python, image_paths, timeout_s):
     return out, None
 
 
+@die_on_unsafe_path
 def main():
     ap = argparse.ArgumentParser(description="Stage B2: Surya OCR with routing + RapidOCR fallback")
     ap.add_argument("out_dir")
@@ -186,10 +188,10 @@ def main():
     skip_len = skip.get("quick_text_len_max", 12)
     skip_density = skip.get("density_max", 0.03)
 
-    dedup_path = os.path.join(args.out_dir, "slides_dedup.json")
-    backup_path = os.path.join(args.out_dir, "slides_dedup.pre_b2.json")
-    ocr_out_path = os.path.join(args.out_dir, "slides_ocr.json")
-    slides_dir = os.path.join(args.out_dir, "slides")
+    dedup_path = contained_path(args.out_dir, "slides_dedup.json")
+    backup_path = contained_path(args.out_dir, "slides_dedup.pre_b2.json")
+    ocr_out_path = contained_path(args.out_dir, "slides_ocr.json")
+    slides_dir = contained_path(args.out_dir, "slides")
     if not os.path.isfile(dedup_path):
         print(f"ERROR: {dedup_path} not found (run dedup_semantic.py first)", file=sys.stderr)
         sys.exit(2)
@@ -202,6 +204,8 @@ def main():
 
     with open(dedup_path, encoding="utf-8") as fh:
         slides = json.load(fh)
+    # Taken before the in-place rewrite: the input is this file's pre-image.
+    prov_inputs = provenance_snapshot([dedup_path, slides_dir], args.out_dir)
 
     # One-time pre-B2 snapshot: this stage rewrites slides_dedup.json in place,
     # and Ctrl-C used to leave Stage C's product corrupt with no way back.
@@ -240,7 +244,7 @@ def main():
             ocr["ocr_confidence"] = 0.0
             n_skip += 1
             continue
-        path = os.path.join(slides_dir, s["filename"])
+        path = contained_path(slides_dir, s["filename"], what="slide filename")
         if os.path.isfile(path):
             surya_targets.append((s, os.path.abspath(path)))
         else:
@@ -306,6 +310,11 @@ def main():
 
     atomic_write_json(dedup_path, slides)
     atomic_write_json(ocr_out_path, slides)
+    record_provenance(args.out_dir, "ocr_b2", [dedup_path, ocr_out_path], prov_inputs,
+                      tool="ocr_surya.py", engine="surya" if surya_python else "rapidocr",
+                      params={"conf_threshold": conf_thr, "resume": bool(args.resume),
+                              "n_surya": n_surya, "n_fallback": n_fallback, "n_pdf": n_pdf,
+                              "n_skipped": n_skip, "surya_error": surya_error})
 
     print(f"Done: surya={n_surya} fallback={n_fallback} pdf={n_pdf} skipped={n_skip} "
           f"-> {dedup_path} (+ {ocr_out_path})")

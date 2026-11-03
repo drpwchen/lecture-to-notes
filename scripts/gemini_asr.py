@@ -58,6 +58,7 @@ import argparse, base64, datetime as dt, json, os, re, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ts_anchor import anchor, parse as parse_local  # noqa: E402
+from _common import require_network_allowed  # noqa: E402
 
 PROMPT_EN = ("Transcribe this English conference talk recording verbatim. It may have been recorded from the audience in "
              "a large hall with loudspeakers. Output only the transcript as plain text, with a [mm:ss] timestamp (time from "
@@ -262,6 +263,7 @@ def main():
     ap.add_argument("--fill-lang", choices=["zh", "en", "bilingual", "auto"],
                     help="transcribe_video --lang for --fill-blocked (default: --lang)")
     a = ap.parse_args()
+    require_network_allowed("send audio to Gemini")   # local-only mode fails closed, before any work
     os.makedirs(a.output_dir, exist_ok=True)
     prompt = PROMPT_ZH if a.lang == "zh" else PROMPT_EN
     keybox = [None]

@@ -83,9 +83,25 @@ HANDOFF_NAME = ".transcribe_handoff.json"
 # CTranslate2 objects parked so they are never destructed in-process.
 _KEEPALIVE: list = []
 
-from _common import (atomic_write_json, fmt_hms, gpu_lease_ctx, load_config,
-                     require_binaries, resolve_model, resolve_pause_flag,
-                     setup_nvidia_path, wait_if_paused, write_transcript_lines)
+from _common import (atomic_write_json, contained_path, fmt_hms, gpu_lease_ctx,
+                     load_config, require_binaries, require_network_allowed,
+                     resolve_model, resolve_pause_flag, setup_nvidia_path,
+                     wait_if_paused, write_transcript_lines)
+
+
+def _record_provenance(output_dir, media_path, *, engine, provider, network, model, params):
+    """provenance.json entry for transcript.json/.txt (never fails the stage)."""
+    try:
+        from provenance import record
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: provenance unavailable ({e})", file=sys.stderr)
+        return
+    record(output_dir, "transcribe",
+           [os.path.join(output_dir, "transcript.json"),
+            os.path.join(output_dir, "transcript.txt")],
+           [media_path], tool="transcribe_video.py", provider=provider,
+           engine=engine, model=model, network=network, params=params,
+           pipeline_version=git_hash() if git_hash else None)
 
 try:
     from _log import StageLogger, append_run_summary, git_hash, lecture_name
@@ -484,6 +500,10 @@ def main() -> int:
         print(f"ERROR: File not found: {media_path}", file=sys.stderr)
         return 1
 
+    # Local-only mode fails closed before anything is uploaded.
+    if args.engine == "groq":
+        require_network_allowed("send audio to Groq (--engine groq)")
+
     # ffmpeg/ffprobe are needed before anything expensive happens; discovering
     # they are missing after a model load (or not at all, as a bare
     # FileNotFoundError) wastes minutes and reads as a Python bug.
@@ -494,11 +514,11 @@ def main() -> int:
     # before doing anything. abspath() first.
     output_dir = args.output_dir or os.path.dirname(os.path.abspath(media_path))
     os.makedirs(output_dir, exist_ok=True)
-    audio_path = os.path.join(output_dir, "audio.wav")
-    transcript_json = os.path.join(output_dir, "transcript.json")
-    transcript_txt = os.path.join(output_dir, "transcript.txt")
-    transcript_partial = os.path.join(output_dir, "transcript.partial.json")
-    handoff_path = os.path.join(output_dir, HANDOFF_NAME)
+    audio_path = contained_path(output_dir, "audio.wav")
+    transcript_json = contained_path(output_dir, "transcript.json")
+    transcript_txt = contained_path(output_dir, "transcript.txt")
+    transcript_partial = contained_path(output_dir, "transcript.partial.json")
+    handoff_path = contained_path(output_dir, HANDOFF_NAME)
 
     if not args.decode_only:
         _warn_off_default(args)
@@ -606,6 +626,10 @@ def main() -> int:
             log.stage_done(success=True, n_segments=len(gres),
                            engine="groq", whisper_model="whisper-large-v3-turbo",
                            total_wall_s=round(wall_s, 1))
+            _record_provenance(output_dir, media_path, engine="groq", provider="groq",
+                               network="internet", model="whisper-large-v3-turbo",
+                               params={"lang": args.lang, "n_segments": len(gres),
+                                       "initial_prompt": bool(initial_prompt)})
             if append_run_summary is not None:
                 try:
                     append_run_summary(output_dir, {
@@ -911,6 +935,14 @@ def main() -> int:
                    whisper_model=model_ref,
                    lang=args.lang,
                    total_wall_s=round(wall_s, 1))
+    _record_provenance(
+        output_dir, media_path, engine="faster-whisper", provider="local", network="none",
+        model=args.model,
+        params={"lang": args.lang, "beam_size": args.beam_size, "batched": args.batched,
+                "batch_size": used_bs, "condition_on_previous_text": not args.no_condition,
+                "vad": args.vad, "word_timestamps": args.word_timestamps,
+                "compute_type": args.compute_type, "initial_prompt": bool(initial_prompt),
+                "detected_language": detected_lang, "n_segments": len(results)})
 
     # ---- runs.jsonl summary ----
     if append_run_summary is not None:

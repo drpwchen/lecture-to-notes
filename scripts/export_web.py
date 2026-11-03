@@ -69,7 +69,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ASSET_DIR = os.path.join(HERE, "layout2")
 
 sys.path.insert(0, HERE)
-from _common import atomic_write_json, load_config, require_binaries
+from _common import (UnsafePathError, atomic_write_json, contained_path, die_on_unsafe_path,
+                     is_within, load_config, require_binaries, safe_basename)
 # Untrusted-content boundary (0.8.0): note/transcript/OCR text is data, never markup.
 from _html_safety import csp_meta, is_safe_relative_url, json_for_script, sanitize_fragment
 
@@ -236,7 +237,11 @@ def move_media_into_support(refs, remuxed):
         if not os.path.isfile(src):
             continue
         src_abs = os.path.abspath(src)
-        dst = os.path.join(MEDIA_VID, os.path.basename(src))
+        if not (is_within(COURSE_ROOT, src_abs) or is_within(MEDIA_VID, src_abs)):
+            print(f"  ⚠️ {fn}: outside the course root — left in place (only files inside it are moved)",
+                  file=sys.stderr)
+            continue
+        dst = contained_path(MEDIA_VID, os.path.basename(src), what="clip name")
         url = VID_URL_PREFIX + os.path.basename(src)
         if os.path.abspath(os.path.dirname(src_abs)) == os.path.abspath(MEDIA_VID):
             moved[fn] = url          # already home; just make sure the URL says so
@@ -481,7 +486,7 @@ def build_media_map(course, order, by):
         for kind in (['l2', 'l3'] if s.get('make_l3', True) else ['l2']):
             K = 'L2' if kind == 'l2' else 'L3'
             base = f"{K}_seg{seg:02d}_{s['slug']}"
-            srcf = os.path.join(course, K, base + ".md")
+            srcf = contained_path(course, K, base + ".md", what="segment note")
             if not os.path.exists(srcf):
                 continue
             kindzh = "逐字稿" if kind == 'l2' else "整理稿"
@@ -887,7 +892,7 @@ def render_sections():
         s = by[seg]
         for kind in (['l2', 'l3'] if s.get('make_l3', True) else ['l2']):
             K = 'L2' if kind == 'l2' else 'L3'
-            srcf = os.path.join(COURSE, K, f"{K}_seg{seg:02d}_{s['slug']}.md")
+            srcf = contained_path(COURSE, K, f"{K}_seg{seg:02d}_{s['slug']}.md", what="segment note")
             if not os.path.exists(srcf):
                 continue
             sid = sectionid(kind, seg)
@@ -1308,7 +1313,11 @@ def resolve_image_src(fr, seg=None):
     """
     global _IMG_INDEX
     for _root in FIGURE_ROOTS:
-        p = os.path.join(_root, fr)
+        try:
+            p = contained_path(_root, fr, what="image embed")
+        except UnsafePathError as e:
+            print(f"ERROR: refusing embed ![[{fr}]] — {e}", file=sys.stderr)
+            return None
         if os.path.exists(p):
             return p
     if _IMG_INDEX is None:
@@ -1386,32 +1395,33 @@ def copy_images():
     for fr, friendly in IMG_MAP.items():
         sp = resolve_image_src(fr, IMG_OWNER.get(fr))
         if sp:
-            shutil.copy(sp, os.path.join(MEDIA_IMG, friendly))
+            shutil.copy(sp, contained_path(MEDIA_IMG, friendly, what="image name"))
 
 
 def copy_notes():
     """2. notes (markdown) with link rewrite + matching pdf rename."""
-    with open(os.path.join(MD_OUT, "00 目錄.md"), "w", encoding="utf-8") as fh:
+    with open(contained_path(MD_OUT, "00 目錄.md"), "w", encoding="utf-8") as fh:
         fh.write(rewrite_links(hub_fm))
-    hubpdf = os.path.join(COURSE, "pdf", HUB.replace(".md", ".pdf"))
+    hubpdf = contained_path(COURSE, "pdf", HUB.replace(".md", ".pdf"))
     if os.path.exists(hubpdf):
-        shutil.copy(hubpdf, os.path.join(PDF_OUT, "00 目錄.pdf"))
+        shutil.copy(hubpdf, contained_path(PDF_OUT, "00 目錄.pdf"))
     for seg in ORDER:
         s = by[seg]
         for kind in (['l2', 'l3'] if s.get('make_l3', True) else ['l2']):
             K = 'L2' if kind == 'l2' else 'L3'
             base = f"{K}_seg{seg:02d}_{s['slug']}"
-            srcf = os.path.join(COURSE, K, base + ".md")
+            srcf = contained_path(COURSE, K, base + ".md", what="segment note")
             if not os.path.exists(srcf):
                 continue
             friendly = NOTE_MAP[base]
             with open(srcf, encoding="utf-8") as fh:
                 src_md = fh.read()
-            with open(os.path.join(MD_OUT, friendly + ".md"), "w", encoding="utf-8") as fh:
+            with open(contained_path(MD_OUT, friendly + ".md", what="note name"), "w",
+                      encoding="utf-8") as fh:
                 fh.write(rewrite_links(src_md))
-            pdfsrc = os.path.join(COURSE, "pdf", base + ".pdf")
+            pdfsrc = contained_path(COURSE, "pdf", base + ".pdf", what="segment pdf")
             if os.path.exists(pdfsrc):
-                shutil.copy(pdfsrc, os.path.join(PDF_OUT, friendly + ".pdf"))
+                shutil.copy(pdfsrc, contained_path(PDF_OUT, friendly + ".pdf", what="pdf name"))
 
 
 def encode_one(src, out):
@@ -1606,6 +1616,9 @@ def retire_remux_sources(refs, remuxed):
             continue
         if os.path.abspath(os.path.dirname(src)) == os.path.abspath(MEDIA_VID):
             continue
+        if not is_within(COURSE_ROOT, src):
+            print(f"  retire: {fn} is outside the course root — original kept", file=sys.stderr)
+            continue
         if not _on_local_fixed_disk(src):
             print(f"  retire: {fn} not on a local fixed disk (no Recycle Bin) — original kept", file=sys.stderr)
             continue
@@ -1663,7 +1676,7 @@ def convert_videos(refs):
                                            PROBE_PROBLEMS) not in WEB_AUDIO)]
     for i, fn in enumerate(needs, 1):
         src = media_abspath(fn)
-        out = os.path.join(MEDIA_VID, VID_MAP[fn])
+        out = contained_path(MEDIA_VID, VID_MAP[fn], what="clip name")
         if output_ok(out, src):
             remuxed.add(fn); continue
         print(f"[encode {i}/{len(needs)}] {fn} -> {VID_MAP[fn]}{' (%s CRF%d)' % (CODEC_LABEL[A.codec], A.crf) if A.compress else ''} …", flush=True)
@@ -1683,7 +1696,7 @@ def _iter_note_srcs():
         _s = by[_seg]
         for _kind in (['l2', 'l3'] if _s.get('make_l3', True) else ['l2']):
             _K = 'L2' if _kind == 'l2' else 'L3'
-            _srcf = os.path.join(COURSE, _K, f"{_K}_seg{_seg:02d}_{_s['slug']}.md")
+            _srcf = contained_path(COURSE, _K, f"{_K}_seg{_seg:02d}_{_s['slug']}.md", what="segment note")
             if os.path.exists(_srcf):
                 with open(_srcf, encoding="utf-8") as fh:
                     yield os.path.basename(_srcf), fh.read()
@@ -1793,6 +1806,7 @@ def write_share_readme(refs, remuxed):
 # of side effects (it used to run the whole pipeline at import time).
 # ---------------------------------------------------------------------------
 
+@die_on_unsafe_path
 def main(argv=None):
     global A, AUTHOR, COURSE, COURSE_ROOT, COURSE_NAME, COURSE_DATE, MANIFEST, MEDIA_REL, MANIFEST_PATH
     global HUB, hub_fm, segs, by, ORDER, RANK
@@ -1884,6 +1898,8 @@ def main(argv=None):
         atomic_write_json(norm_path, segs, indent=1)
         print(f"[normalize] backfilled missing segment fields -> {norm_path} "
               "(input segments.json untouched)")
+    for s in segs:   # slugs name files under L2/ L3/ pdf/ — one plain component each
+        safe_basename(str(s.get('slug')), what=f"segments.json seg {s.get('seg')} slug")
     by = {s['seg']: s for s in segs}
     ORDER = [s['seg'] for s in sorted(segs, key=order)]
     RANK = {seg: i + 1 for i, seg in enumerate(ORDER)}
@@ -1988,7 +2004,29 @@ def main(argv=None):
     if rc:
         return rc
     write_share_readme(refs, set(remuxed) | set(moved))
+    _record_export_provenance(seg_path, manifest_path, refs, remuxed, moved)
     return 0
+
+
+def _record_export_provenance(seg_path, manifest_path, refs, remuxed, moved):
+    """<support>/provenance.json, keys relative to the HTML's folder. Recorded last, so
+    the 分享說明 sizes above are unaffected; media/影片 is not hashed (gigabytes)."""
+    try:
+        from provenance import record
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: provenance unavailable ({e})", file=sys.stderr)
+        return
+    ins = [seg_path, manifest_path, os.path.join(COURSE, HUB)]
+    ins += [p for p in (os.path.join(COURSE, "L2"), os.path.join(COURSE, "L3")) if os.path.isdir(p)]
+    record(os.path.dirname(os.path.abspath(HTML_OUT)), "export_web",
+           [HTML_OUT, os.path.join(SUPPORT, "_timeline.json"), os.path.join(SUPPORT, "_media_map.json"),
+            MD_OUT, MEDIA_IMG], ins, tool="export_web.py", engine="pandoc+ffmpeg",
+           params={"viewer_version": VIEWER_VERSION, "schema_version": SCHEMA_VERSION,
+                   "compress": A.compress, "codec": A.codec if A.compress else None,
+                   "crf": A.crf if A.compress else None, "no_remux": A.no_remux,
+                   "media_in_place": A.media_in_place, "n_clips": len(refs),
+                   "n_remuxed": len(remuxed), "n_moved": len(moved)},
+           manifest_dir=SUPPORT)
 
 
 if __name__ == "__main__":

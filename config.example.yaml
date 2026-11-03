@@ -321,3 +321,12 @@ gemini:
   # --via default: api (REST API, GEMINI_API_KEY) or agy (Antigravity CLI headless -
   # read the terms-of-service note in scripts/gemini_asr.py first). Env LECTURE_GEMINI_VIA wins.
   via: api
+
+# ---------------------------------------------------------------------------
+# Privacy
+# ---------------------------------------------------------------------------
+privacy:
+  # true = the cloud transcription routes (transcribe_video --engine groq, gemini_asr.py,
+  # asr_gemini_primary.py) exit 2 before uploading anything. Env LECTURE_LOCAL_ONLY wins
+  # (1/true = on, 0/false = off). No stage ever falls back from local to cloud on its own.
+  local_only: false

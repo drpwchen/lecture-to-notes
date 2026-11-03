@@ -136,7 +136,11 @@ def transcribe_groq(media_path: str, language: str | None = "zh",
 
     Raises RuntimeError if the key is missing/invalid; lets requests exceptions
     (network/429/5xx) propagate so the caller can fall back to local.
+    Also raises RuntimeError, before anything is uploaded, while local-only
+    mode is on (env ``LECTURE_LOCAL_ONLY``).
     """
+    if (os.environ.get("LECTURE_LOCAL_ONLY") or "").strip().lower() not in ("", "0", "false", "no", "off"):
+        raise RuntimeError("local-only mode is on (LECTURE_LOCAL_ONLY) — refusing to upload audio to Groq")
     key = get_groq_key()
     if not key.startswith("gsk_"):
         raise RuntimeError(

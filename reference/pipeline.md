@@ -23,7 +23,7 @@ Rationale and post-mortems live in `decisions.md`.
 - [Multi-source alignment](#alignment)
 - [JSON schemas](#schemas)
 - [Timeouts](#timeouts)
-- [Observability](#observability)
+- [Observability](#observability) · [provenance.json](#provenance) · [path containment](#containment)
 
 ---
 
@@ -836,3 +836,38 @@ Diagnosing a stall:
 
 VLM heartbeats carry `avg_slide_s` (rolling mean), `queue_remaining`, and
 `eta_s` (their product) for ETA reporting.
+
+### provenance.json — what produced each artifact {#provenance}
+
+A fourth layer, written by every stage that produces an artifact (0.10.0; not `gpu_check`):
+`<lecture>/provenance.json` keeps, per artifact, the latest `stage`, `tool`,
+`pipeline_version`, `run_id`, `provider` (`local` / `groq` / `gemini` / an LLM
+vendor), `engine`, `model`, `network` (`none` / `loopback` / `internet`), the
+stage's `params`, the artifact's own digest and the digests of its `inputs`
+(sha256; files over 256 MB — media — by size plus the first and last MiB; a
+directory such as `slides/` by one hash over its files). Paths outside the lecture
+dir are stored as `external:<basename>`, never absolute. `export_web.py` keeps its
+own in `<support folder>/provenance.json`, keyed relative to the HTML's folder.
+
+```bash
+python scripts/provenance.py verify "$OUT_DIR"     # exit 1 on modified / stale / missing
+```
+
+`modified` = the file is not what its stage wrote (hand edit, or a writer that
+does not record); `stale` = an input changed after it was built (re-run that
+stage); a stage that rewrites its own input in place (Stage B2, the collapse
+repair) records the pre-image, so it is not reported as stale. Stage F has no
+script, so the agent records it: `provenance.py record <dir> --stage synthesis
+--output … --input … --provider … --model … --network …`. Recording never fails
+a stage — an error prints a WARNING and the artifact stands.
+
+### Path containment {#containment}
+
+Every directory given on the command line is an approved root. A name read from a
+data file — a plan `slug`, Stage F's `attachment_name`, an L3 embed target, a
+`filename` in a slides JSON, a manifest clip path that would be moved — goes
+through `_common.contained_path` / `safe_basename`: no absolute path, drive, `..`,
+`:` or control character, and the joined result must resolve (symlinks and
+junctions followed) inside the root. A valid name passes unchanged; an invalid one
+stops the stage with exit 2 (`export_web.py` refuses the one embed and fails its
+embed check). Clips outside the course root are never moved or recycled.

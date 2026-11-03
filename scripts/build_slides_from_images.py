@@ -57,8 +57,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from _common import (atomic_write_json, fmt_hms, laplacian_variance,  # noqa: E402
-                     rapidocr_engine, rapidocr_text_ex)
+from _common import (atomic_write_json, contained_path, die_on_unsafe_path,  # noqa: E402
+                     fmt_hms, laplacian_variance, rapidocr_engine, rapidocr_text_ex)
+from provenance import record as record_provenance  # noqa: E402
 # Capture-time probing lives in media_capture_index; importing it (rather than
 # copying the EXIF logic) is what keeps "how we read a capture time" a single
 # fact. Import is side-effect free — that module only touches ffprobe in main().
@@ -185,6 +186,7 @@ def image_size(path):
         return im.size
 
 
+@die_on_unsafe_path
 def main():
     ap = argparse.ArgumentParser(
         description="Path B-images: a directory of slide images -> "
@@ -332,10 +334,10 @@ def main():
               f"(first few: {', '.join(perr[:5])})", file=sys.stderr)
 
     # --- Stage the images under out_dir/slides ------------------------
-    slides_dir = os.path.join(args.out_dir, "slides")
+    slides_dir = contained_path(args.out_dir, "slides")
     os.makedirs(slides_dir, exist_ok=True)
     for p in ordered:
-        dst = os.path.join(slides_dir, p["name"])
+        dst = contained_path(slides_dir, p["name"], what="slide image name")
         # Copy, never move: the user's originals stay untouched. Same-file is
         # the normal case when img_dir already IS out_dir/slides.
         if os.path.abspath(dst) != os.path.abspath(p["path"]):
@@ -472,8 +474,15 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
     raw = [dict(s, pipeline_stage="raw") for s in out]
-    atomic_write_json(os.path.join(args.out_dir, "slides_raw.json"), raw)
-    atomic_write_json(os.path.join(args.out_dir, "slides_dedup.json"), out)
+    raw_path = contained_path(args.out_dir, "slides_raw.json")
+    dedup_path = contained_path(args.out_dir, "slides_dedup.json")
+    atomic_write_json(raw_path, raw)
+    atomic_write_json(dedup_path, out)
+    record_provenance(args.out_dir, "slides_from_images", [raw_path, dedup_path],
+                      [args.img_dir], tool="build_slides_from_images.py",
+                      engine="rapidocr" if engine is not None else "python",
+                      params={"audio_duration_sec": args.audio_duration_sec,
+                              "n_images": n, "order": primary})
 
     span = (f"per-slide={per_slide_s:.1f}s" if has_audio
             else "no-audio (timestamps 0)")

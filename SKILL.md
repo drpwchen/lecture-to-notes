@@ -59,7 +59,9 @@ page is the map; detail lives in `reference/`, one topic per file.
    break gaps matched to the minute.
 10. ==🚫 PHI red line==: if the recording contains patient-identifiable content
    (case discussion, ward rounds, named patients), transcribe LOCAL ONLY — drop
-   `--engine groq`. When unsure, ask; default to local.
+   `--engine groq`. When unsure, ask; default to local. `LECTURE_LOCAL_ONLY=1`
+   (or config `privacy.local_only: true`) makes the Groq and Gemini routes exit 2
+   before uploading anything.
 
 ## Input types and routing
 
@@ -139,6 +141,12 @@ RULE 9). Default model alias is `breeze25` (needs a local model dir); on a
 machine without one, pass `--model large-v3`, which faster-whisper downloads.
 Recordings over ~30 min go through the chunked runner instead.
 → `reference/pipeline.md#transcription`
+
+**Transcript already exists elsewhere** (MLX Whisper, a hosted STT, captions, a human
+transcript): import it instead of transcribing —
+`python <skill-dir>/scripts/import_transcript.py <file.srt|.vtt|.json> --out-dir "$OUT_DIR"
+[--engine NAME] [--model NAME]`. It writes the same `transcript.json`/`.txt`, never
+touches the source, refuses to overwrite without `--force`; the next step is Step 5.
 
 **Gemini as the primary transcript** (measured 2026-10-24: Gemini 97–100 % vs best local 64–85 %
 on 15 course clips in 3 categories, 82 % vs 54–60 % on far-field hall audio). Allowed only where the
@@ -381,6 +389,8 @@ rather than less output (`reference/decisions.md#optional-dependency-degradation
 └── scripts/
     ├── route_inputs.py           front door — classifies material, prints the plan
     ├── transcribe_video.py  retranscribe_segment.py  gpu_check.py  groq_asr.py  gemini_asr.py
+    ├── import_transcript.py      external SRT / VTT / JSON -> transcript.json
+    ├── provenance.py             provenance.json record + `verify <dir>`
     ├── extract_slides.py  quick_ocr.py  dedup_semantic.py  ocr_surya.py
     ├── vlm_signals.py            (ocr_slides.py = deprecated shim → here)
     ├── build_slides_from_pdf.py  build_slides_from_images.py  crop_multiup_pdf.py
@@ -403,6 +413,7 @@ Per-lecture output directory:
 ```
 {lecture}/
 ├── metadata.json          run_id + media fingerprint + per-stage status
+├── provenance.json        per artifact: stage, tool, engine, model, params, network, input hashes
 ├── transcript.json/.txt   timestamped segments; .txt is [MM:SS] text, H:MM:SS past an hour
 ├── asr_suspects.txt       flagged tokens — flags only, never a rewrite
 ├── alignment.json         multi-source capture-start hypotheses (when applicable)
@@ -418,6 +429,12 @@ Per-lecture output directory:
 ```
 
 Each stage output is a superset of the previous, so you can re-run one stage
-without redoing transcription or frame extraction. `runs.jsonl` one level up
+without redoing transcription or frame extraction. `python <skill-dir>/scripts/provenance.py
+verify "$OUT_DIR"` lists artifacts that are `stale` (an input changed after they were
+built — re-run that stage) or `modified` (edited after their stage wrote them). Stage F
+records itself with `provenance.py record` (see the public repo's `docs/stage-f-contract.md`).
+Names taken from data files (plan slugs, `attachment_name`, embed targets, slide
+filenames) must stay inside the directory given on the command line — a stage exits 2
+on one that does not; fix the data, never the check. `runs.jsonl` one level up
 carries one summary line per stage run, joined by `run_id`. Keep the intermediates
 — they are how tier decisions get debugged.

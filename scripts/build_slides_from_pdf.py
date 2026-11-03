@@ -36,7 +36,9 @@ import argparse, json, os, re, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
-from _common import atomic_write_json, fmt_hms, laplacian_variance, rapidocr_text_ex  # noqa: E402
+from _common import (atomic_write_json, contained_path, die_on_unsafe_path,  # noqa: E402
+                     fmt_hms, laplacian_variance, rapidocr_text_ex)
+from provenance import record as record_provenance  # noqa: E402
 
 # More than this fraction of pages with no rendered image means the render step
 # failed, not that a few docx pages were text-only.
@@ -92,6 +94,7 @@ def _resolve_image(item, idx, slides_dir):
     return f"page_{num:02d}.jpg"
 
 
+@die_on_unsafe_path
 def main():
     ap = argparse.ArgumentParser(description="Path B: pdf_text.json -> slides_raw/dedup.json")
     ap.add_argument("lecture_dir")
@@ -109,14 +112,14 @@ def main():
     args = ap.parse_args()
 
     d = args.lecture_dir
-    slides_dir = os.path.join(d, "slides")
-    pt_path = os.path.join(d, "pdf_text.json")
+    slides_dir = contained_path(d, "slides")
+    pt_path = contained_path(d, "pdf_text.json")
     if not os.path.isfile(pt_path):
         print(f"ERROR: {pt_path} not found", file=sys.stderr)
         sys.exit(2)
 
     pages = []
-    intro_path = os.path.join(d, "pdf_text_intro.json")
+    intro_path = contained_path(d, "pdf_text_intro.json")
     if os.path.isfile(intro_path):
         with open(intro_path, encoding="utf-8") as fh:
             pages += json.load(fh)
@@ -135,7 +138,7 @@ def main():
     missing = []
     for i, item in enumerate(pages):
         fn = _resolve_image(item, i, slides_dir)
-        img_path = os.path.join(slides_dir, fn)
+        img_path = contained_path(slides_dir, fn, what="page image")
         if os.path.isfile(img_path):
             resolved.append((i, item, fn, img_path))
         else:
@@ -238,8 +241,18 @@ def main():
     # label each with the stage whose file it is, instead of stamping "dedup" on
     # both.
     raw = [dict(s, pipeline_stage="raw") for s in out]
-    atomic_write_json(os.path.join(d, "slides_raw.json"), raw)
-    atomic_write_json(os.path.join(d, "slides_dedup.json"), out)
+    raw_path = contained_path(d, "slides_raw.json")
+    dedup_path = contained_path(d, "slides_dedup.json")
+    atomic_write_json(raw_path, raw)
+    atomic_write_json(dedup_path, out)
+    record_provenance(d, "slides_from_pdf", [raw_path, dedup_path],
+                      [pt_path, slides_dir] + ([intro_path] if os.path.isfile(intro_path) else []),
+                      tool="build_slides_from_pdf.py",
+                      engine="rapidocr-density" if engine is not None else "python",
+                      params={"audio_duration_sec": args.audio_duration_sec,
+                              "density_mode": args.density_mode,
+                              "density_budget_hit": density_budget_hit,
+                              "n_pages": n, "n_emitted": n_emitted})
 
     span = f"per-slide={per_slide_s:.1f}s" if has_audio else "no-audio (timestamps 0)"
     print(f"OK {os.path.basename(d)}: {n_emitted}/{n} pages -> raw + dedup "

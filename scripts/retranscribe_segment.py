@@ -49,8 +49,8 @@ import sys
 import tempfile
 import time
 
-from _common import (atomic_write_json, gpu_lease_ctx, load_config, resolve_model,
-                     setup_nvidia_path, write_transcript_lines)
+from _common import (atomic_write_json, contained_path, gpu_lease_ctx, load_config,
+                     resolve_model, setup_nvidia_path, write_transcript_lines)
 
 try:
     from _log import StageLogger, read_metadata
@@ -400,8 +400,8 @@ def build_glossary_from_pdf(pdf_text_path, slide_range=None, max_chars=600):
 
 def write_transcript_files(segments, out_dir, basename="transcript"):
     """Write ``<basename>.json`` + ``.txt`` (canonical [MM:SS] writer)."""
-    atomic_write_json(os.path.join(out_dir, f"{basename}.json"), segments)
-    write_transcript_lines(segments, os.path.join(out_dir, f"{basename}.txt"))
+    atomic_write_json(contained_path(out_dir, f"{basename}.json"), segments)
+    write_transcript_lines(segments, contained_path(out_dir, f"{basename}.txt"))
 
 
 def merge_segments(master, replacements):
@@ -718,10 +718,28 @@ def main():
 
     # Backup + merge
     bak = backup_path_for(transcript_path)
+    try:
+        from provenance import snapshot
+        pre = snapshot([transcript_path, audio_path], out_dir)
+    except Exception:  # noqa: BLE001 — provenance must never block a repair
+        pre = None
     shutil.copy(transcript_path, bak)
     print(f"\nBacked up to {bak}")
     merged = merge_segments(master, replacements)
     write_transcript_files(merged, out_dir, basename)
+    if pre is not None:
+        from provenance import record
+        record(out_dir, "retranscribe",
+               [os.path.join(out_dir, f"{basename}.json"),
+                os.path.join(out_dir, f"{basename}.txt")], pre,
+               tool="retranscribe_segment.py", engine="faster-whisper",
+               model=args.model, params={
+                   "mode": "auto" if args.auto else "manual", "language": lang_arg,
+                   "beam_size": args.beam_size,
+                   "repetition_penalty": args.repetition_penalty,
+                   "no_repeat_ngram_size": args.no_repeat_ngram_size,
+                   "ranges": [[round(s, 2), round(e, 2)] for s, e, _ in replacements],
+                   "n_segments_before": len(master), "n_segments_after": len(merged)})
     print(f"Wrote merged transcript: {len(master)} -> {len(merged)} segments "
           f"({basename}.json / .txt)")
     if failed:

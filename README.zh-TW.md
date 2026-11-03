@@ -130,9 +130,15 @@ OCR 兩階段（RapidOCR 快篩 → Surya 精讀）、本地 VLM 判讀投影片
       跑 headless `agy` 不受支援，即使是以本機子程序呼叫官方 binary 也一樣，可能被停權；
       直接寫的 script 與 CI 則被描述為可以。AI agent 啟動的 script 算不算「直接」
       沒有定論。請自行確認最新 FAQ；有疑慮就用 `api`。
-    兩條路線音訊都會離開你的電腦——機密錄音別走。
+    兩條路線音訊都會離開你的電腦——機密錄音別走。設 `LECTURE_LOCAL_ONLY=1`（或
+    `config.yaml` 的 `privacy.local_only: true`），Groq 與 Gemini 路線會在上傳前就結束；
+    任何階段都不會自行從本機退回雲端。
+  - **逐字稿從別處來**——MLX Whisper、雲端 STT、創作者字幕、人工逐字稿：
+    `scripts/import_transcript.py` 把 SRT、WebVTT 或 whisper 格式的 JSON 轉成管線的
+    `transcript.json`（[規格](docs/transcript-contract.md)），Stage 0 直接跳過。
   - **Apple Silicon** 理論上以 CPU 模式可行（faster-whisper 走 CPU、
-    ollama 原生支援 macOS）——合理但未實測，歡迎回報。
+    ollama 原生支援 macOS），或用上面的方式匯入 MLX Whisper 的輸出——合理但未實測；
+    GPU 預檢目前沒有 Apple Silicon 的資源設定。歡迎回報。
 - 選配：ollama + `minicpm-v:8b`（Stage D）、獨立 venv 的 Surya（高品質 OCR）、
   pandoc（網頁／PDF 匯出）。
 - 8GB 顯卡上 GPU 階段必須序列化：Whisper 和 VLM 不能同時跑，抽幀也不能和轉錄
@@ -159,7 +165,7 @@ python scripts/route_inputs.py /path/to/素材資料夾
 照印出來的指令跑。轉錄一定要給 `--lang`，沒有預設值——語言猜錯的話 Whisper
 會把有口音的英文幻覺成流暢的中文，而且要等你讀了逐字稿才會發現。
 
-## 三個要先知道的設計
+## 要先知道的設計
 
 - **逐字稿永不自動修正**。可疑詞只會被「標記」到 `asr_suspects.txt`，逐字稿本身
   一個 byte 都不動。兩版自動修正都做過、量測過、然後撤掉了
@@ -167,6 +173,12 @@ python scripts/route_inputs.py /path/to/素材資料夾
 - **VLM 不做 OCR**。Stage D 只問視覺模型語意訊號，文字一律來自 OCR 階段。
 - **選配套件缺了要吵**。缺套件就關掉該功能並講清楚少了什麼，絕不偷偷換一個比較
   差的方法——「輸出變錯」比「輸出變少」貴太多，細節見 `docs/AUDIT_SUMMARY.md`。
+- **每個產物都記得自己怎麼來的**。各階段把工具、引擎、模型、參數、有沒有連網、
+  輸入的雜湊寫進產物旁的 `provenance.json`；`python scripts/provenance.py verify <dir>`
+  會指出寫出後被改過、或輸入在那之後變了的檔案。
+- **資料檔裡的名字不會變成路徑**。slug、`attachment_name`、嵌圖目標都來自 JSON 或
+  LLM 寫的筆記，一律檢查是否留在你在指令列給的資料夾內（會追 symlink），越界就拒絕，
+  不會偷偷改成別的名字。
 
 ## 這是 skill 還是一堆腳本？
 
@@ -178,6 +190,8 @@ python scripts/route_inputs.py /path/to/素材資料夾
 prompt 驅動的規格（`reference/note-spec.md`），不是可執行腳本**，沒有
 `synthesize.py`。不用 agent 的話，請把 `slides_grounded.json` 當交接點，自己接
 想用的模型；規格說明產物要滿足什麼條件，`audit_note.py` 會機械化檢查。
+不綁任何供應商的版本在 [`docs/stage-f-contract.md`](docs/stage-f-contract.md)：
+輸入、輸出檔與欄位、之後由哪支腳本檢查什麼。
 
 ## 出身
 

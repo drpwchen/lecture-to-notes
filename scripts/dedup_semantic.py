@@ -40,7 +40,8 @@ import os
 import sys
 import time
 
-from _common import atomic_write_json
+from _common import atomic_write_json, contained_path, die_on_unsafe_path
+from provenance import record as record_provenance
 
 try:
     from _log import StageLogger
@@ -224,7 +225,7 @@ def group_slides(slides, slides_dir, fuzz_lib, ssim_fn,
         if slide["filename"] in grays:
             return grays[slide["filename"]]
         try:
-            g = load_gray(os.path.join(slides_dir, slide["filename"]))
+            g = load_gray(contained_path(slides_dir, slide["filename"], what="slide filename"))
         except Exception as e:
             print(f"  WARN: cannot load {slide['filename']} for layout: {e}",
                   file=sys.stderr)
@@ -343,6 +344,7 @@ def group_slides(slides, slides_dir, fuzz_lib, ssim_fn,
 
 # --------------------------- entrypoint ---------------------------------------
 
+@die_on_unsafe_path
 def main():
     parser = argparse.ArgumentParser(description="Stage C: semantic dedup")
     parser.add_argument("out_dir", help="Lecture output directory")
@@ -369,9 +371,9 @@ def main():
         os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml")
     _ZOOM_UI_TOKENS = _load_ui_tokens(config_path)
 
-    raw_path = os.path.join(args.out_dir, "slides_raw.json")
-    slides_dir = os.path.join(args.out_dir, "slides")
-    out_path = os.path.join(args.out_dir, "slides_dedup.json")
+    raw_path = contained_path(args.out_dir, "slides_raw.json")
+    slides_dir = contained_path(args.out_dir, "slides")
+    out_path = contained_path(args.out_dir, "slides_dedup.json")
 
     if not os.path.isfile(raw_path):
         print(f"ERROR: {raw_path} not found. Run quick_ocr.py first.", file=sys.stderr)
@@ -410,6 +412,15 @@ def main():
     atomic_write_json(out_path, enriched)
 
     canonical_count = sum(1 for s in enriched if s["dedup"].get("is_canonical"))
+    record_provenance(args.out_dir, "dedup", [out_path], [raw_path, slides_dir],
+                      tool="dedup_semantic.py",
+                      engine="rapidfuzz+ssim" if fuzz_lib and ssim_fn else
+                      ("rapidfuzz" if fuzz_lib else ("ssim" if ssim_fn else "python")),
+                      params={"text_threshold": args.text_threshold,
+                              "layout_threshold": args.layout_threshold,
+                              "max_gap_seconds": args.max_gap_seconds,
+                              "max_span_seconds": args.max_span_seconds,
+                              "n_input": len(enriched), "n_canonical": canonical_count})
     elapsed = time.time() - start
     print(f"\nDone: {len(enriched)} input slides -> {canonical_count} canonical "
           f"({len(enriched) - canonical_count} superseded) in {elapsed:.1f}s")

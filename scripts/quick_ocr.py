@@ -54,12 +54,15 @@ import sys
 import time
 
 try:
-    from _common import (RAPIDOCR_INSTALL_HINT, atomic_write_json, fmt_hms,
-                         laplacian_variance, rapidocr_engine, rapidocr_text_ex)
+    from _common import (RAPIDOCR_INSTALL_HINT, atomic_write_json, contained_path,
+                         die_on_unsafe_path, fmt_hms, laplacian_variance,
+                         rapidocr_engine, rapidocr_text_ex)
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from _common import (RAPIDOCR_INSTALL_HINT, atomic_write_json, fmt_hms,
-                         laplacian_variance, rapidocr_engine, rapidocr_text_ex)
+    from _common import (RAPIDOCR_INSTALL_HINT, atomic_write_json, contained_path,
+                         die_on_unsafe_path, fmt_hms, laplacian_variance,
+                         rapidocr_engine, rapidocr_text_ex)
+from provenance import record as record_provenance
 
 try:
     from _log import StageLogger
@@ -159,6 +162,7 @@ def derive_confidence(ocr_results):
     return float(statistics.mean(confs))
 
 
+@die_on_unsafe_path
 def main():
     parser = argparse.ArgumentParser(description="Stage B: quick OCR for every frame")
     parser.add_argument("out_dir", help="Lecture output directory (containing slides/)")
@@ -169,9 +173,9 @@ def main():
                              "would change what existing callers get.")
     args = parser.parse_args()
 
-    slides_dir = os.path.join(args.out_dir, "slides")
-    ts_path = os.path.join(slides_dir, "timestamps.json")
-    out_path = os.path.join(args.out_dir, "slides_raw.json")
+    slides_dir = contained_path(args.out_dir, "slides")
+    ts_path = contained_path(slides_dir, "timestamps.json")
+    out_path = contained_path(args.out_dir, "slides_raw.json")
 
     if not os.path.isfile(ts_path):
         print(f"ERROR: {ts_path} not found. Run extract_slides.py first.", file=sys.stderr)
@@ -202,7 +206,7 @@ def main():
         first_ts = s.get("first_ts", s["timestamp"])
         end_ts = s["timestamp"]
         time_str = f"{fmt_hms(first_ts)}-{fmt_hms(end_ts)}"
-        img_path = os.path.join(slides_dir, s["filename"])
+        img_path = contained_path(slides_dir, s["filename"], what="slide filename")
 
         if not os.path.isfile(img_path):
             # Keep a placeholder entry. Dropping it left holes in the slide_id
@@ -302,6 +306,10 @@ def main():
                      confidence=round(confidence, 3))
 
     atomic_write_json(out_path, results)
+    record_provenance(args.out_dir, "quick_ocr", [out_path], [ts_path, slides_dir],
+                      tool="quick_ocr.py", engine="rapidocr",
+                      params={"n_slides": len(results), "n_missing": n_missing,
+                              "n_ocr_error": n_ocr_error})
 
     elapsed = time.time() - start
     print(f"\nDone: {len(results)} slides in {elapsed:.1f}s -> {out_path}")
