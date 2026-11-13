@@ -123,8 +123,8 @@ Source: 2025-03-01 範例醫師《肩關節超音波入門》· 20250301_範例�
 `LECTURE_CORPUS_ROOT`）；兩個都沒設時，腳本印出「RAG export is off」、什麼都不寫。
 
 **建索引不在這個 repo。** 資料夾格式是
-[`t2n-corpus/1`](https://github.com/drpwchen/vault-search/blob/main/docs/corpus-format.md)，
-[vault-search](https://github.com/drpwchen/vault-search) 一行指令就能建索引：
+[`t2n-corpus/1`](https://github.com/drpwchen/ask-your-library/blob/main/docs/corpus-format.md)，
+[ask-your-library](https://github.com/drpwchen/ask-your-library)（舊名 vault-search）一行指令就能建索引：
 
 ```bash
 python <vault-search>/server/corpus.py check ~/lecture-corpus

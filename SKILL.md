@@ -337,7 +337,7 @@ Runs only when `rag.corpus_root` (config.yaml) or `LECTURE_CORPUS_ROOT` is set o
 Rule-based (no model): each 總整理 `##` → one entry with an H1 + `Source:` line,
 slide notes minus repeats, timecodes → `[cNN MM:SS]`, bookkeeping → `_meta.md`.
 Pass every note of one course in one call; a re-run needs `--replace`. Indexing is
-vault-search's job (`server/corpus.py add <root>`), not this skill's. → README
+ask-your-library's job (`server/corpus.py add <root>`), not this skill's. → README
 "Make your lectures searchable".
 
 ## Edge cases

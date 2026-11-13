@@ -10,12 +10,15 @@ points 5 (workspace containment), 8 (provenance / local-only), 1 (generic
 transcript importer) and the provider-neutral Stage F contract. Point 2 (Apple
 Silicon / MLX profile) still needs someone with a Mac — see below.
 
+vault-search is now ask-your-library ([drpwchen/ask-your-library](https://github.com/drpwchen/ask-your-library));
+the docs use the new name. `LTN_VAULT_SEARCH_DIR` is unchanged.
+
 ### Added
 
 - **Searchable corpus export, optional and off by default** (`scripts/export_corpus.py`,
   SKILL.md "Last step — Searchable corpus", README "Make your lectures searchable"). One course's finished notes
   become a `t2n-corpus/1` lecture folder that
-  [vault-search](https://github.com/drpwchen/vault-search/blob/main/docs/corpus-format.md)
+  [ask-your-library](https://github.com/drpwchen/ask-your-library/blob/main/docs/corpus-format.md)
   indexes with `server/corpus.py add <root>`: `corpus.json`, one `<course>/` folder with a
   `_meta.md` (speakers, recordings `c01…`, note → entry map, abbreviation table, what was
   left out) and one entry per topic, each opening with an H1 and a
@@ -30,7 +33,7 @@ Silicon / MLX profile) still needs someone with a Mac — see below.
   nothing and exits 0. Refuses (exit 2) an existing course folder without `--replace`, a
   `corpus.json` of another kind, and a course name that is a path. 28 tests on a synthetic
   fixture (`tests/test_export_corpus.py`); with `LTN_VAULT_SEARCH_DIR` set they also run
-  vault-search's own `Source:` parser and `corpus.py check --strict` over the output. Measured on 4 real courses against
+  ask-your-library's own `Source:` parser and `corpus.py check --strict` over the output. Measured on 4 real courses against
   a hand-curated (LLM-written) corpus of the same notes: 100 % of `Source:` lines parse
   with date and title (speaker: 3 of 4 courses; the 4th course's notes carry no speaker
   field — pass `--speaker`), entries 11–14 per course (curated: 7–14), median 1.7–3.5 KB

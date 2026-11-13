@@ -186,8 +186,8 @@ To make it the last step of every run, set `rag.corpus_root` in `config.yaml`
 and writes nothing.
 
 **Indexing is not part of this repo.** The folder follows the
-[`t2n-corpus/1` format](https://github.com/drpwchen/vault-search/blob/main/docs/corpus-format.md);
-[vault-search](https://github.com/drpwchen/vault-search) indexes it in one command:
+[`t2n-corpus/1` format](https://github.com/drpwchen/ask-your-library/blob/main/docs/corpus-format.md);
+[ask-your-library](https://github.com/drpwchen/ask-your-library) (formerly *vault-search*) indexes it in one command:
 
 ```bash
 python <vault-search>/server/corpus.py check ~/lecture-corpus
