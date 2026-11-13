@@ -139,6 +139,67 @@ format**, so everything also lands in your note vault:
 So you get three durable forms of the same lecture: the synced webpage for
 studying, markdown for your knowledge base, PDF for handing to anyone.
 
+## Make your lectures searchable (optional)
+
+Off by default. If you never want search, skip this section — nothing in the
+pipeline changes.
+
+A note written for reading is the wrong shape for a retrieval index (one long
+file, frontmatter, callouts, embedded slides). `scripts/export_corpus.py` turns
+one course's finished notes into a **lecture corpus folder** — one plain
+Markdown file per topic, each starting with an H1 and a `Source:` line — by
+rules alone: no model, no API key, same notes in → same bytes out.
+
+```bash
+python scripts/export_corpus.py "<vault>/00Inbox/20250301_Example_Shoulder US basics.md" \
+    --corpus-root ~/lecture-corpus --course-dir 20250301_example_shoulder-US
+```
+
+```
+~/lecture-corpus/
+├── corpus.json        {"format": "t2n-corpus/1", "kind": "lecture"}
+└── 20250301_example_shoulder-US/
+    ├── _meta.md       speakers, recordings (c01, c02…), note → entry map, abbreviations
+    ├── 01_Biceps_groove_landmark.md
+    └── 02_….md
+```
+
+```markdown
+# Biceps groove landmark
+
+Source: 2025-03-01 Dr. Example《Shoulder ultrasound basics》· 20250301_example_shoulder-US · c01
+
+- Start in short axis over the bicipital groove [c01 03:21]
+```
+
+- Each `##` section of `# 總整理` becomes an entry (short ones merged, long ones
+  split at `###`); slide notes follow, minus every line 總整理 already has.
+  `--summary-only` exports 總整理 alone.
+- Timecodes become `[cNN MM:SS]`, `cNN` being a recording listed in `_meta.md`.
+  A line without a timecode stays without one — nothing is invented.
+- Several notes of one course (day 1, day 2, several speakers) go in one call;
+  each keeps its own date and speaker in its `Source:` line.
+- Re-running for the same course needs `--replace`. `--dry-run` prints the plan.
+
+To make it the last step of every run, set `rag.corpus_root` in `config.yaml`
+(or `LECTURE_CORPUS_ROOT`); without either the script prints "RAG export is off"
+and writes nothing.
+
+**Indexing is not part of this repo.** The folder follows the
+[`t2n-corpus/1` format](https://github.com/drpwchen/vault-search/blob/main/docs/corpus-format.md);
+[vault-search](https://github.com/drpwchen/vault-search) indexes it in one command:
+
+```bash
+python <vault-search>/server/corpus.py check ~/lecture-corpus
+python <vault-search>/server/corpus.py add   ~/lecture-corpus
+```
+
+What a rule-based export cannot do: regroup content into new topics, spell
+out abbreviations in the text (they are listed in `_meta.md`), convert
+Simplified Chinese ASR leftovers, or add a timecode the note never had.
+Speaker and title come from the note's frontmatter and title line; for notes
+that lack them, pass `--speaker` / `--title` / `--date`.
+
 ## Alignment: capture time is a hypothesis, cross-correlation is evidence
 
 The part worth stealing, if you take nothing else.
@@ -307,6 +368,7 @@ keys, and which script checks what afterwards.
 | `docs/AUDIT_SUMMARY.md` | What the pre-release audit found, and two things it got wrong |
 | `docs/transcript-contract.md` | What `transcript.json` must contain; `import_transcript.py` for an external ASR |
 | `docs/stage-f-contract.md` | Stage F (synthesis) inputs, outputs and gates, for any LLM |
+| `scripts/export_corpus.py` | Optional: finished notes → a searchable lecture corpus folder (`t2n-corpus/1`) |
 | `SECURITY.md` | How to report a vulnerability privately |
 | `tools/sync_from_skill.py` | Maintenance: re-export from the upstream skill tree |
 

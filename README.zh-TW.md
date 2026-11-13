@@ -81,6 +81,60 @@ HTML 檢視頁是閱讀介面；**markdown 才是儲存格式**，所有內容�
 所以同一堂課會有三種耐放的形態：同步網頁拿來研讀、markdown 進知識庫、
 PDF 給誰都能開。
 
+## 讓演講可以被搜尋（選用）
+
+預設關閉。不需要搜尋就跳過這一節，管線其他部分完全不受影響。
+
+給人讀的筆記不適合直接拿去建檢索索引（一個長檔、frontmatter、callout、嵌入的投影片）。
+`scripts/export_corpus.py` 把一門課完成的筆記轉成**演講語料資料夾**：一個主題一個純 Markdown 檔，
+開頭是 H1 加一行 `Source:`。全部照規則轉，不呼叫模型、不需要 API key，同樣的筆記進去，
+出來的位元組也一樣。
+
+```bash
+python scripts/export_corpus.py "<vault>/00Inbox/20250301_範例醫師_肩關節超音波入門.md" \
+    --corpus-root ~/lecture-corpus --course-dir 20250301_範例醫師_肩關節超音波入門
+```
+
+```
+~/lecture-corpus/
+├── corpus.json        {"format": "t2n-corpus/1", "kind": "lecture"}
+└── 20250301_範例醫師_肩關節超音波入門/
+    ├── _meta.md       講者、錄影代號（c01、c02…）、筆記 → 條目對照、縮寫表
+    ├── 01_二頭肌溝定位.md
+    └── 02_….md
+```
+
+```markdown
+# 二頭肌溝定位
+
+Source: 2025-03-01 範例醫師《肩關節超音波入門》· 20250301_範例醫師_肩關節超音波入門 · c01
+
+- 探頭短軸放在二頭肌溝上開始掃 [c01 03:21]
+```
+
+- `# 總整理` 底下每個 `##` 一個條目（太短的合併、太長的在 `###` 切開）；逐投影片筆記接在後面，
+  總整理已經有的句子不重複。只要總整理就加 `--summary-only`。
+- 時間碼轉成 `[cNN MM:SS]`，`cNN` 是 `_meta.md` 列出的錄影代號。筆記裡沒標時間的句子就不標，
+  不會自己編。
+- 同一門課的多份筆記（第一天、第二天、不同講者）一次給；每份的 `Source:` 保留自己的日期與講者。
+- 同一門課重跑要加 `--replace`；`--dry-run` 只印計畫。
+
+想讓每次跑完都自動輸出，就在 `config.yaml` 設 `rag.corpus_root`（或環境變數
+`LECTURE_CORPUS_ROOT`）；兩個都沒設時，腳本印出「RAG export is off」、什麼都不寫。
+
+**建索引不在這個 repo。** 資料夾格式是
+[`t2n-corpus/1`](https://github.com/drpwchen/vault-search/blob/main/docs/corpus-format.md)，
+[vault-search](https://github.com/drpwchen/vault-search) 一行指令就能建索引：
+
+```bash
+python <vault-search>/server/corpus.py check ~/lecture-corpus
+python <vault-search>/server/corpus.py add   ~/lecture-corpus
+```
+
+規則式轉換做不到的事：把內容重新歸成新的主題、在正文裡展開縮寫（縮寫表放在 `_meta.md`）、
+把 ASR 殘留的簡體字轉繁體、補上筆記原本沒有的時間碼。講者與課名取自筆記的 frontmatter
+與標題行；筆記沒有這些資訊時，用 `--speaker`／`--title`／`--date` 指定。
+
 ## 管線做了什麼
 
 Stage A–E 是純 Python、零 LLM token：轉錄（faster-whisper）、抽幀＋感知去重、

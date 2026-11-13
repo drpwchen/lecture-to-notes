@@ -330,3 +330,12 @@ privacy:
   # asr_gemini_primary.py) exit 2 before uploading anything. Env LECTURE_LOCAL_ONLY wins
   # (1/true = on, 0/false = off). No stage ever falls back from local to cloud on its own.
   local_only: false
+
+# ---------------------------------------------------------------------------
+# export_corpus.py — optional searchable lecture corpus (README: "Make your lectures searchable")
+# ---------------------------------------------------------------------------
+rag:
+  # Folder that collects one sub-folder per course in the t2n-corpus/1 format, for
+  # vault-search to index. Blank (the default) = the export is off and the script writes
+  # nothing. Env LECTURE_CORPUS_ROOT wins; --corpus-root wins over both.
+  corpus_root: ''

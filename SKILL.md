@@ -326,6 +326,20 @@ Compression default is ==H.265 CRF 24== (self-use; `--codec h264` when sharing
 to machines you can't verify). Multi-talk workshops keep their own flow →
 `reference/segmented-mode.md`. → `reference/pipeline.md#web-export`
 
+### Step 16 — Searchable corpus (optional, off by default)
+
+```bash
+python <skill-dir>/scripts/export_corpus.py "<note path>" [more notes of the same course] \
+    --course-dir "<course folder name>" [--replace]
+```
+Runs only when `rag.corpus_root` (config.yaml) or `LECTURE_CORPUS_ROOT` is set or
+`--corpus-root` is given; otherwise it prints "RAG export is off" and writes nothing.
+Rule-based (no model): each 總整理 `##` → one entry with an H1 + `Source:` line,
+slide notes minus repeats, timecodes → `[cNN MM:SS]`, bookkeeping → `_meta.md`.
+Pass every note of one course in one call; a re-run needs `--replace`. Indexing is
+vault-search's job (`server/corpus.py add <root>`), not this skill's. → README
+"Make your lectures searchable".
+
 ## Edge cases
 
 - **Audio only, no deck** → transcript-only note using `# 逐段筆記` instead of
@@ -396,6 +410,7 @@ rather than less output (`reference/decisions.md#optional-dependency-degradation
     ├── build_slides_from_pdf.py  build_slides_from_images.py  crop_multiup_pdf.py
     ├── ground_slides.py  flag_asr_suspects.py  make_glossary.py  build_real_words.py
     ├── render_embeds.py  finalize_to_vault.py  audit_note.py  export_web.py
+    ├── export_corpus.py          optional: notes -> t2n-corpus/1 lecture corpus (Step 16)
     ├── media_capture_index.py  xcorr_media_offsets.py  query_near_field.py
     ├── _mdpm.py                  AVCHD .MTS recording clock (no container tag)
     ├── adapters/    surya_adapter.py        (production OCR adapters)

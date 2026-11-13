@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.10.0] — 2026-11-03 — path containment, provenance manifest, transcript importer
+## [0.10.0] — 2026-11-03 — path containment, provenance manifest, transcript importer, searchable corpus export
 
 Follow-up to [issue #1](https://github.com/drpwchen/lecture-to-notes/issues/1):
 points 5 (workspace containment), 8 (provenance / local-only), 1 (generic
@@ -12,6 +12,32 @@ Silicon / MLX profile) still needs someone with a Mac — see below.
 
 ### Added
 
+- **Searchable corpus export, optional and off by default** (`scripts/export_corpus.py`,
+  SKILL Step 16, README "Make your lectures searchable"). One course's finished notes
+  become a `t2n-corpus/1` lecture folder that
+  [vault-search](https://github.com/drpwchen/vault-search/blob/main/docs/corpus-format.md)
+  indexes with `server/corpus.py add <root>`: `corpus.json`, one `<course>/` folder with a
+  `_meta.md` (speakers, recordings `c01…`, note → entry map, abbreviation table, what was
+  left out) and one entry per topic, each opening with an H1 and a
+  `Source: <date> <speaker>《<title>》· <course> · c01` line. Rule-based — no model, no
+  network, byte-identical re-runs: each `# 總整理` `##` section is an entry (under 600
+  characters merged with the next, over 3000 split at `###`); slide notes are packed after
+  them minus every line whose text 總整理 already carries (8-character shingles, ≥ 80 %);
+  `(V1 MM:SS)` / `` `MM:SS` `` / `[H:MM:SS]` become `[cNN …]`, and an untimed line stays
+  untimed. Clinical Pearls, `# Resource`, embeds, placeholders, comments and frontmatter
+  are dropped; callouts become plain text; `[[link|alias]]` becomes its alias. Turned on by
+  `--corpus-root`, `LECTURE_CORPUS_ROOT` or `rag.corpus_root`; with none of them it writes
+  nothing and exits 0. Refuses (exit 2) an existing course folder without `--replace`, a
+  `corpus.json` of another kind, and a course name that is a path. 28 tests on a synthetic
+  fixture (`tests/test_export_corpus.py`); with `LTN_VAULT_SEARCH_DIR` set they also run
+  vault-search's own `Source:` parser and `corpus.py check --strict` over the output. Measured on 4 real courses against
+  a hand-curated (LLM-written) corpus of the same notes: 100 % of `Source:` lines parse
+  with date and title (speaker: 3 of 4 courses; the 4th course's notes carry no speaker
+  field — pass `--speaker`), entries 11–14 per course (curated: 7–14), median 1.7–3.5 KB
+  (curated 2.0–2.9 KB), 87–97 % of the notes' text lines found in the export (curated
+  34–64 % by the same measure — it rewrites rather than copies). `corpus.py check --strict` on
+  the 4 exported courses: 49 entries, 0 errors, 0 warnings. It does not regroup into
+  new topics, expand abbreviations in the text, or convert Simplified-Chinese ASR leftovers.
 - **`scripts/import_transcript.py`** — an external transcript (MLX Whisper, a hosted
   STT service, creator captions, a human transcript) becomes the pipeline's
   `transcript.json` + `transcript.txt` (`docs/transcript-contract.md`), so Stage 0 is
