@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] — 2026-11-14 — Docs: README quality pass
+
+### Docs
+
+- README (EN and zh-TW): Requirements (with a cost line) and Quickstart now come right after "Why this exists",
+  followed by a support line and a related-tools line; new Limitations section.
+- README shortened to under 400 lines: the full Requirements detail moved to `docs/requirements.md`, the
+  design notes to `docs/design-notes.md`.
+- README（英文與繁中）：環境需求（含費用）與快速開始移到「為什麼做這個」之後，接支持連結與相關工具；新增「限制」段落。
+- 英文 README 縮短：完整環境需求移到 `docs/requirements.md`、設計備忘移到 `docs/design-notes.md`。
+
 ## [0.11.0] — 2026-11-14 — searchable corpus export (optional)
 
 vault-search is now ask-your-library ([drpwchen/ask-your-library](https://github.com/drpwchen/ask-your-library));

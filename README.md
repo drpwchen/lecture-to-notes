@@ -35,6 +35,62 @@ you actually want to know is *how the maneuver is performed* — and that only
 lives in motion. So the summary is for studying, the transcript is for
 verifying, and the video is one click away from both.
 
+## Requirements
+
+- **Tested on Windows 11** with an NVIDIA RTX 3070 Ti (8 GB). Linux and macOS are untested.
+- **Python 3.12** and **`ffmpeg` / `ffprobe` on PATH** (not optional).
+- **An NVIDIA GPU (8 GB+) is the fast path, not a requirement.** Without one, transcription falls back to CPU
+  automatically and prints an ETA first; a 60-minute lecture then takes hours instead of minutes.
+- **Optional:** [ollama](https://ollama.com) with `minicpm-v:8b` (Stage D slide semantics), a separate venv with
+  [Surya](https://github.com/VikParuchuri/surya) for OCR, `pandoc` for web/PDF export.
+- **Cost:** Stages A-E run locally and cost nothing beyond electricity. The final note-writing step (Stage F)
+  uses an LLM through your own agent or API. Hosted ASR (Groq, Gemini) is opt-in, billed to your key, and sends
+  audio off your machine.
+
+Small GPUs, hosted-ASR offload, importing an external transcript and Apple Silicon: see
+[docs/requirements.md](docs/requirements.md).
+
+## Quickstart
+
+```bash
+git clone https://github.com/drpwchen/lecture-to-notes
+cd lecture-to-notes
+
+pip install -r requirements.txt
+pip install -r requirements-optional.txt     # recommended
+cp config.example.yaml config.yaml           # every value is blank/optional by default
+
+ollama pull minicpm-v:8b                     # optional, Stage D
+
+# Put your material in one folder, then ask what to run:
+python scripts/route_inputs.py /path/to/material_folder
+```
+
+`route_inputs.py` is the front door. It classifies the folder, prints the ordered
+commands for the right path, and lists the questions a human has to answer
+first. **It is plan-only** — it never runs anything and never writes a file.
+For agents and workflow engines, `--json` gives each step as an argv list (no
+shell parsing) with `network`, `gpu`, `reads`/`writes` and the `<LANG>`-style
+`placeholders` a human must fill before the step is `runnable`.
+
+Then run the printed commands. The first one is transcription, and it will not
+start without `--lang`:
+
+```bash
+python scripts/transcribe_video.py "lecture.mp4" \
+    --output-dir "$OUT_DIR" --lang <zh|en|bilingual|auto>
+```
+
+That is deliberate. There is no default language, because guessing wrong makes
+Whisper hallucinate fluent Chinese out of accented English and the transcript is
+unusable in a way that is not obvious until you read it.
+
+> 🧋 Saved you some time? [Buy me a drink](https://drpwchen.com/en/support/).
+
+**Related tools:** [textbook-to-note](https://github.com/drpwchen/textbook-to-note) (the same idea for textbooks) ·
+[ask-your-library](https://github.com/drpwchen/ask-your-library) (search the finished notes) ·
+[note-supplement](https://github.com/drpwchen/note-supplement) (merge new material into existing notes)
+
 ## Bring whatever you captured
 
 Real courses never produce one tidy recording. Some talks you filmed, some you
@@ -225,106 +281,6 @@ normal in the output, because every downstream stage faithfully processes the
 wrong pairing. A pipeline that silently reconciles conflicting evidence produces
 confident garbage; one that flags the conflict produces a question.
 
-## Requirements
-
-Honest version:
-
-- **Tested on Windows 11** with an NVIDIA RTX 3070 Ti (8 GB). Nothing is
-  Windows-specific by design, but Linux/macOS are untested.
-- **Python 3.12**
-- **An NVIDIA GPU (8 GB+) is the fast path, not a requirement.** Without one:
-  - **CPU fallback is built in** — transcription drops to int8 on CPU
-    automatically and prints an honest ETA first (a 60-minute lecture takes
-    hours instead of minutes). The OCR triage stage is CPU-friendly already.
-  - **A small GPU (2–4 GB) counts as no GPU.** `large-v3`-class models need
-    ~4.5 GB; the pre-flight reports `GPU_TOO_SMALL` and lets the CPU path run.
-    Make it bearable with a smaller model —
-    `transcribe_video.py ... --device cpu --model small` (or `medium`) — or
-    offload with `--engine groq` below. Skip Stage D (`minicpm-v:8b`) and
-    Surya OCR on such a machine; RapidOCR is CPU-only anyway.
-  - **Offload transcription to a hosted Whisper** — `scripts/groq_asr.py`
-    sends compressed audio to Groq's `whisper-large-v3-turbo` (free tier
-    works; the 25 MB request cap is handled by chunking) and returns the same
-    segment format as the local path. Read its docstring first: hosted Whisper
-    has no anti-collapse knobs for heavily code-switched audio, and anything
-    you send leaves your machine — don't route confidential recordings there.
-  - **Offload transcription to Gemini** — `scripts/asr_gemini_primary.py`
-    makes Gemini the transcript and keeps a local breeze25 pass as the clock
-    and as a second source to check names and numbers against (Gemini is an
-    LLM: it swaps names and occasionally contradicts a slide). On 15 course
-    clips Gemini hit 97–100 % of reference terms vs 64–85 % for the best local
-    model per category; on far-field hall audio 82 % vs 54–60 %. Two routes, set by
-    `gemini_asr.py --via`:
-    - `api` (default) — REST API with `GEMINI_API_KEY`; usage is billed to
-      that key.
-    - `agy` — the Antigravity CLI in headless mode (Windows + WSL Ubuntu only),
-      on the quota of the Google account it is signed into. **Read the terms-of-service note in
-      `gemini_asr.py` first.** As relayed on the Google AI Developers Forum
-      (2026-10-16), Google's FAQ says headless `agy` inside third-party coding
-      agents is not supported on consumer plans (including Pro), even when
-      the official binary is called as a local subprocess, and can lead to
-      account suspension; direct scripts and CI are described as allowed.
-      Whether a script that an AI agent launches counts as "direct" is not
-      settled. Check the current FAQ; if in doubt, use `api`.
-    Audio leaves your machine on both routes — non-confidential recordings
-    only. `LECTURE_LOCAL_ONLY=1` (or `privacy.local_only: true` in
-    `config.yaml`) makes the Groq and Gemini routes exit before anything is
-    uploaded; no stage ever falls back from local to cloud on its own.
-  - **Bring a transcript from elsewhere** — MLX Whisper, a hosted STT service,
-    creator captions, a human transcript: `scripts/import_transcript.py`
-    converts SRT, WebVTT or whisper-style JSON into the pipeline's
-    `transcript.json` ([contract](docs/transcript-contract.md)) and Stage 0 is
-    skipped.
-  - **Apple Silicon** should work in CPU mode (faster-whisper on CPU, ollama
-    is native on macOS), or with MLX Whisper's output imported as above —
-    plausible but untested; there is no Apple Silicon resource profile in the
-    GPU pre-flight yet. Reports welcome.
-- **`ffmpeg` and `ffprobe` on PATH** — not optional.
-- Optional: [ollama](https://ollama.com) with `minicpm-v:8b` for Stage D slide
-  semantics; a separate venv with [Surya](https://github.com/VikParuchuri/surya)
-  for high-quality OCR; `pandoc` for the web/PDF export.
-
-On an 8 GB card, GPU stages must be serialized — Whisper and the VLM cannot run
-concurrently, and frame extraction must not run during transcription. Run
-transcription with its bare defaults (`--lang` only): an n=15 sweep found
-`--beam-size 10` lost recall at 1.7× the time. Larger beams/batches are for the
-anti-collapse retry only, and `--beam-size 15` with sequential mode crashes.
-
-## Quickstart
-
-```bash
-git clone https://github.com/drpwchen/lecture-to-notes
-cd lecture-to-notes
-
-pip install -r requirements.txt
-pip install -r requirements-optional.txt     # recommended
-cp config.example.yaml config.yaml           # every value is blank/optional by default
-
-ollama pull minicpm-v:8b                     # optional, Stage D
-
-# Put your material in one folder, then ask what to run:
-python scripts/route_inputs.py /path/to/material_folder
-```
-
-`route_inputs.py` is the front door. It classifies the folder, prints the ordered
-commands for the right path, and lists the questions a human has to answer
-first. **It is plan-only** — it never runs anything and never writes a file.
-For agents and workflow engines, `--json` gives each step as an argv list (no
-shell parsing) with `network`, `gpu`, `reads`/`writes` and the `<LANG>`-style
-`placeholders` a human must fill before the step is `runnable`.
-
-Then run the printed commands. The first one is transcription, and it will not
-start without `--lang`:
-
-```bash
-python scripts/transcribe_video.py "lecture.mp4" \
-    --output-dir "$OUT_DIR" --lang <zh|en|bilingual|auto>
-```
-
-That is deliberate. There is no default language, because guessing wrong makes
-Whisper hallucinate fluent Chinese out of accented English and the transcript is
-unusable in a way that is not obvious until you read it.
-
 ## Is this a Claude Code skill or a set of scripts?
 
 Both, and the distinction matters for what you get.
@@ -347,6 +303,17 @@ whatever model you prefer — the spec tells you what the output has to satisfy,
 and `audit_note.py` mechanically checks it. [`docs/stage-f-contract.md`](docs/stage-f-contract.md)
 is that contract without any provider in it: inputs, the output files and their
 keys, and which script checks what afterwards.
+
+## Limitations
+
+- Only tested on Windows 11 with one 8 GB NVIDIA card; Linux, macOS and Apple Silicon are untested.
+- Without a GPU, transcription runs but is slow (hours per lecture).
+- On an 8 GB card, GPU stages must run one at a time (Whisper and the VLM cannot overlap).
+- The transcript is never auto-corrected; suspect tokens are only flagged, so names and numbers still need a human check.
+- Hosted ASR (Groq, Gemini) sends audio off your machine and is for non-confidential recordings only; no stage
+  falls back from local to cloud by itself.
+- Defaults still show their origin (Mandarin Zoom UI dedup list, Traditional Chinese note headings, medical word lists).
+  They are config, not code.
 
 ## Repo layout
 
@@ -372,31 +339,9 @@ keys, and which script checks what afterwards.
 | `SECURITY.md` | How to report a vulnerability privately |
 | `tools/sync_from_skill.py` | Maintenance: re-export from the upstream skill tree |
 
-## Design notes worth knowing before you change something
+## Design notes
 
-- **The transcript is never auto-corrected.** Suspect tokens are *flagged*
-  (`asr_suspects.txt`); the transcript stays byte-identical. Two auto-correction
-  passes were built, measured, and retired — details in
-  `reference/decisions.md`. Treat each flag as a question, not a substitution.
-- **The VLM does not do OCR.** Stage D asks a vision model for semantic signals
-  only (what kind of slide is this, how complex, what is it about). Text comes
-  from the OCR stages. Conflating the two was the source of a long-running "we
-  have three duplicate OCR scripts" confusion.
-- **Optional dependencies degrade loudly.** A missing optional package disables
-  its feature and tells you what you lost. It never silently substitutes a worse
-  method — that produced wrong output rather than less output, which is the
-  single most expensive bug class in `docs/AUDIT_SUMMARY.md`.
-- **Every stage output is a superset of the previous one**, so you can re-run one
-  stage without redoing transcription or frame extraction. Keep the
-  intermediates; they are how tier decisions get debugged.
-- **Every artifact says what made it.** Each stage records tool, engine, model,
-  parameters, network use and input hashes in `provenance.json` next to its
-  output; `python scripts/provenance.py verify <dir>` flags a file edited after
-  its stage wrote it, or built from an input that has changed since.
-- **Names from data files never become paths.** A slug, an `attachment_name` or
-  an embed target comes from a JSON file or an LLM-written note; it is checked to
-  stay inside the directory you gave on the command line (symlinks followed)
-  and refused otherwise — never rewritten into some other name.
+The invariants to know before changing anything (transcript never auto-corrected, VLM does no OCR, optional dependencies degrade loudly, provenance on every artifact, no data-derived paths) are in [docs/design-notes.md](docs/design-notes.md).
 
 ## Provenance and defaults
 
