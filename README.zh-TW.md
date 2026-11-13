@@ -127,8 +127,8 @@ Source: 2025-03-01 範例醫師《肩關節超音波入門》· 20250301_範例�
 [ask-your-library](https://github.com/drpwchen/ask-your-library)（舊名 vault-search）一行指令就能建索引：
 
 ```bash
-python <vault-search>/server/corpus.py check ~/lecture-corpus
-python <vault-search>/server/corpus.py add   ~/lecture-corpus
+python <ask-your-library>/server/corpus.py check ~/lecture-corpus
+python <ask-your-library>/server/corpus.py add   ~/lecture-corpus
 ```
 
 規則式轉換做不到的事：把內容重新歸成新的主題、在正文裡展開縮寫（縮寫表放在 `_meta.md`）、

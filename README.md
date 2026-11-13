@@ -190,8 +190,8 @@ and writes nothing.
 [ask-your-library](https://github.com/drpwchen/ask-your-library) (formerly *vault-search*) indexes it in one command:
 
 ```bash
-python <vault-search>/server/corpus.py check ~/lecture-corpus
-python <vault-search>/server/corpus.py add   ~/lecture-corpus
+python <ask-your-library>/server/corpus.py check ~/lecture-corpus
+python <ask-your-library>/server/corpus.py add   ~/lecture-corpus
 ```
 
 What a rule-based export cannot do: regroup content into new topics, spell
