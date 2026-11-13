@@ -44,8 +44,8 @@ without --corpus-root. With none of the three it prints that the export is off
 and exits 0 having written nothing, so it is safe as an unconditional last step.
 
 Then index with ask-your-library (not part of this repo):
-    python <ask-your-library>/server/corpus.py check DIR
-    python <ask-your-library>/server/corpus.py add DIR
+    <ask-your-library-venv-python> <ask-your-library>/server/corpus.py check DIR
+    <ask-your-library-venv-python> <ask-your-library>/server/corpus.py add DIR
 
 Exit codes: 0 ok / export off, 1 nothing exportable, 2 refused (bad input,
 an existing course folder without --replace, a corpus.json of another kind).
@@ -797,8 +797,8 @@ def main(argv=None) -> int:
     for name, body in files.items():
         Path(contained_path(cdir, name, what="entry file")).write_text(body, encoding="utf-8", newline="\n")
     print("\nNext (ask-your-library, " + SPEC_URL + "):")
-    print(f'  python <ask-your-library>/server/corpus.py check "{root}"')
-    print(f'  python <ask-your-library>/server/corpus.py add "{root}"')
+    print(f'  <ask-your-library-venv-python> <ask-your-library>/server/corpus.py check "{root}"')
+    print(f'  <ask-your-library-venv-python> <ask-your-library>/server/corpus.py add "{root}"')
     return 0
 
 
