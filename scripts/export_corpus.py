@@ -13,8 +13,8 @@ alone (no model, no network, same input -> same bytes):
         ├── 01_<section>.md        one entry per topic section of the note
         └── 02_<section>.md
 
-The folder format is the `t2n-corpus/1` contract that vault-search indexes
-(https://github.com/drpwchen/vault-search/blob/main/docs/corpus-format.md):
+The folder format is the `t2n-corpus/1` contract that ask-your-library indexes
+(https://github.com/drpwchen/ask-your-library/blob/main/docs/corpus-format.md):
 each entry starts with an H1 and a `Source:` line,
 
     Source: 2025-02-15 Dr. Wu《Upper-limb nerve ultrasound》· course_dir · c01
@@ -43,9 +43,9 @@ or set `rag.corpus_root` in config.yaml (or env LECTURE_CORPUS_ROOT) and run it
 without --corpus-root. With none of the three it prints that the export is off
 and exits 0 having written nothing, so it is safe as an unconditional last step.
 
-Then index with vault-search (not part of this repo):
-    python <vault-search>/server/corpus.py check DIR
-    python <vault-search>/server/corpus.py add DIR
+Then index with ask-your-library (not part of this repo):
+    python <ask-your-library>/server/corpus.py check DIR
+    python <ask-your-library>/server/corpus.py add DIR
 
 Exit codes: 0 ok / export off, 1 nothing exportable, 2 refused (bad input,
 an existing course folder without --replace, a corpus.json of another kind).
@@ -72,7 +72,7 @@ from _log import __version__  # noqa: E402
 CORPUS_FORMAT = "t2n-corpus/1"
 CORPUS_KIND = "lecture"
 META_FILENAME = "_meta.md"
-SPEC_URL = "https://github.com/drpwchen/vault-search/blob/main/docs/corpus-format.md"
+SPEC_URL = "https://github.com/drpwchen/ask-your-library/blob/main/docs/corpus-format.md"
 
 # H1 headings with a fixed role. Compared case-insensitively after stripping.
 SUMMARY_H1 = ("總整理", "summary", "overview")
@@ -785,9 +785,9 @@ def main(argv=None) -> int:
         (cdir / name).unlink()
     for name, body in files.items():
         Path(contained_path(cdir, name, what="entry file")).write_text(body, encoding="utf-8", newline="\n")
-    print("\nNext (vault-search, " + SPEC_URL + "):")
-    print(f'  python <vault-search>/server/corpus.py check "{root}"')
-    print(f'  python <vault-search>/server/corpus.py add "{root}"')
+    print("\nNext (ask-your-library, " + SPEC_URL + "):")
+    print(f'  python <ask-your-library>/server/corpus.py check "{root}"')
+    print(f'  python <ask-your-library>/server/corpus.py add "{root}"')
     return 0
 
 

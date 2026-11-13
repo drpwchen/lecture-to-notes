@@ -2,7 +2,7 @@
 
 Synthetic fixtures only (tests/fixtures/corpus_export/); no real lecture text.
 The Source-line check below restates the contract the indexer parses; set
-LTN_VAULT_SEARCH_DIR to a vault-search checkout to also run its own parser
+LTN_VAULT_SEARCH_DIR to an ask-your-library (formerly vault-search) checkout to also run its own parser
 (server/lecture_meta.py) over the output.
 """
 import json
@@ -97,7 +97,7 @@ def test_vault_search_parser_reads_every_source_line(tmp_path):
 def test_vault_search_checker_passes_strict(tmp_path):
     checker = os.path.join(os.environ["LTN_VAULT_SEARCH_DIR"], "server", "corpus.py")
     if not os.path.isfile(checker):
-        pytest.skip("this vault-search checkout has no server/corpus.py")
+        pytest.skip("this ask-your-library checkout has no server/corpus.py")
     _rc, root, _cdir = run(tmp_path)
     r = subprocess.run([sys.executable, checker, "check", str(root), "--strict"],
                        capture_output=True, text=True, encoding="utf-8")
@@ -267,3 +267,13 @@ def test_note_without_sections_is_reported(tmp_path, capsys):
     bare.write_text("# Only a title\n\n", encoding="utf-8")
     rc, root, _ = run(tmp_path, notes=(bare,))
     assert rc == 1 and not root.exists()
+
+
+def test_next_step_points_at_ask_your_library(tmp_path, capsys):
+    rc, _root, _cdir = run(tmp_path)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "https://github.com/drpwchen/ask-your-library/blob/main/docs/corpus-format.md" in out
+    assert "<ask-your-library>/server/corpus.py check" in out
+    assert "<ask-your-library>/server/corpus.py add" in out
+    assert "vault-search" not in out

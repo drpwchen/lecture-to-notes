@@ -37,6 +37,14 @@ the docs use the new name. `LTN_VAULT_SEARCH_DIR` is unchanged.
   the 4 exported courses: 49 entries, 0 errors, 0 warnings. It does not regroup into
   new topics, expand abbreviations in the text, or convert Simplified-Chinese ASR leftovers.
 
+### Changed
+
+- `export_corpus.py` names ask-your-library (formerly vault-search) in its module help and in the
+  "Next" lines it prints: the format link is now
+  `https://github.com/drpwchen/ask-your-library/blob/main/docs/corpus-format.md` and the commands
+  `<ask-your-library>/server/corpus.py check|add`. `LTN_VAULT_SEARCH_DIR` is unchanged. A test pins the
+  printed text.
+
 ## [0.10.0] — 2026-11-03 — path containment, provenance manifest, transcript importer
 
 Follow-up to [issue #1](https://github.com/drpwchen/lecture-to-notes/issues/1):
