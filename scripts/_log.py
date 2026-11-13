@@ -59,7 +59,7 @@ from datetime import datetime
 # Fallback build identity for installs that are not a git checkout (a tarball /
 # pip install has no .git, so git_hash() would report "unknown" forever). Bump
 # on release; git_hash() prefers the real commit when one is available.
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 
 # ----------------------------------------------------------------------

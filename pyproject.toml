@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lecture-to-notes"
-version = "0.10.0"
+version = "0.11.0"
 description = "Local-first pipeline: lecture recordings + slides -> timestamped, slide-grounded notes and a synced HTML viewer"
 readme = "README.md"
 license = { file = "LICENSE" }

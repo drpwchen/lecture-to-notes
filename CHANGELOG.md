@@ -3,12 +3,7 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.10.0] — 2026-11-03 — path containment, provenance manifest, transcript importer, searchable corpus export
-
-Follow-up to [issue #1](https://github.com/drpwchen/lecture-to-notes/issues/1):
-points 5 (workspace containment), 8 (provenance / local-only), 1 (generic
-transcript importer) and the provider-neutral Stage F contract. Point 2 (Apple
-Silicon / MLX profile) still needs someone with a Mac — see below.
+## [0.11.0] — 2026-11-14 — searchable corpus export (optional)
 
 vault-search is now ask-your-library ([drpwchen/ask-your-library](https://github.com/drpwchen/ask-your-library));
 the docs use the new name. `LTN_VAULT_SEARCH_DIR` is unchanged.
@@ -41,6 +36,16 @@ the docs use the new name. `LTN_VAULT_SEARCH_DIR` is unchanged.
   34–64 % by the same measure — it rewrites rather than copies). `corpus.py check --strict` on
   the 4 exported courses: 49 entries, 0 errors, 0 warnings. It does not regroup into
   new topics, expand abbreviations in the text, or convert Simplified-Chinese ASR leftovers.
+
+## [0.10.0] — 2026-11-03 — path containment, provenance manifest, transcript importer
+
+Follow-up to [issue #1](https://github.com/drpwchen/lecture-to-notes/issues/1):
+points 5 (workspace containment), 8 (provenance / local-only), 1 (generic
+transcript importer) and the provider-neutral Stage F contract. Point 2 (Apple
+Silicon / MLX profile) still needs someone with a Mac — see below.
+
+### Added
+
 - **`scripts/import_transcript.py`** — an external transcript (MLX Whisper, a hosted
   STT service, creator captions, a human transcript) becomes the pipeline's
   `transcript.json` + `transcript.txt` (`docs/transcript-contract.md`), so Stage 0 is
