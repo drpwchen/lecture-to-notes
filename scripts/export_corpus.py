@@ -57,6 +57,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -602,10 +603,20 @@ def render_entry(e: Entry, course_dir: str) -> str:
 
 
 def safe_name(title: str, cap: int = 60) -> str:
-    s = UNSAFE_NAME_CHARS.sub("_", title)
-    s = re.sub(r"\s+", "_", s)
-    s = re.sub(r"_+", "_", s).strip("._ ")
-    return s[:cap].rstrip("._ ") or "entry"
+    """A file-name slug: letters, digits (CJK included), `-` and `.` kept; every
+    other character — spaces, `；` `—` `/` `（` `&` and the like — becomes `_`,
+    runs collapsed. Over `cap` it is cut at the last `_` when that keeps at
+    least half the cap (no half words), else at the cap (CJK has no spaces)."""
+    out = []
+    for ch in title:
+        cat = unicodedata.category(ch)
+        keep = ch in "-." or cat[0] in "LN" or cat == "Mn"
+        out.append(ch if keep and not UNSAFE_NAME_CHARS.match(ch) else "_")
+    s = re.sub(r"_+", "_", "".join(out)).strip("._-")
+    if len(s) > cap:
+        cut = s.rfind("_", 0, cap + 1)
+        s = s[:cut] if cut >= cap // 2 else s[:cap]
+    return s.rstrip("._-") or "entry"
 
 
 def entry_filenames(entries: list[Entry]) -> list[str]:

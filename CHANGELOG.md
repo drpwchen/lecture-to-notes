@@ -44,6 +44,11 @@ the docs use the new name. `LTN_VAULT_SEARCH_DIR` is unchanged.
   `https://github.com/drpwchen/ask-your-library/blob/main/docs/corpus-format.md` and the commands
   `<ask-your-library>/server/corpus.py check|add`. `LTN_VAULT_SEARCH_DIR` is unchanged. A test pins the
   printed text.
+- Entry file names: every character other than a letter, digit (CJK included), `-` or `.` —
+  `；` `—` `／` `（` `&`, spaces — becomes `_`, runs collapsed; a name over 60 characters is cut
+  at the last `_` when that keeps at least 30, so no word is cut in half (CJK runs, which have
+  no word breaks, are cut at 60). Before: `01_Biceps_groove_landmark；Supraspinatus_long_axis；講者其他分享.md`,
+  `02_…_Title_sli.md`. The default course folder name uses the same rule.
 
 ## [0.10.0] — 2026-11-03 — path containment, provenance manifest, transcript importer
 

@@ -277,3 +277,29 @@ def test_next_step_points_at_ask_your_library(tmp_path, capsys):
     assert "<ask-your-library>/server/corpus.py check" in out
     assert "<ask-your-library>/server/corpus.py add" in out
     assert "vault-search" not in out
+
+
+@pytest.mark.parametrize("title,cap,want", [
+    ("Biceps groove landmark；Supraspinatus long axis；講者其他分享", 60,
+     "Biceps_groove_landmark_Supraspinatus_long_axis_講者其他分享"),
+    ("Shoulder ultrasound basics — slide notes: Slide 1 — Title slide … Slide 2", 60,
+     "Shoulder_ultrasound_basics_slide_notes_Slide_1_Title_slide"),
+    ("A/B ／ C、D (E) & F", 60, "A_B_C_D_E_F"),
+    ("Bone Stress Injury (BSI) 分級", 60, "Bone_Stress_Injury_BSI_分級"),
+    ("兒童青少年運動傷害評估原則與急性期照護與重返運動的完整流程說明", 20, "兒童青少年運動傷害評估原則與急性期照護與"),
+    ("Salter-Harris v2.0", 60, "Salter-Harris_v2.0"),
+    ("；—／", 60, "entry"),
+])
+def test_safe_name_cuts_at_boundaries_and_maps_separators(title, cap, want):
+    assert ec.safe_name(title, cap) == want
+
+
+def test_entry_file_names_are_clean(tmp_path):
+    _rc, _root, cdir = run(tmp_path)
+    for p in entries(cdir):
+        stem = p.stem
+        assert not re.search(r"[；—–／、，：\s]|__", stem), stem
+        assert len(stem.split("_", 1)[1]) <= 60, stem
+    names = [p.name for p in entries(cdir)]
+    assert "01_Biceps_groove_landmark_Supraspinatus_long_axis_講者其他分享.md" in names
+    assert any(n.startswith("02_Shoulder_ultrasound_basics_slide_notes_Slide_1_Title_slide") for n in names)
