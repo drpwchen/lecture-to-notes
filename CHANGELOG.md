@@ -13,7 +13,7 @@ Silicon / MLX profile) still needs someone with a Mac — see below.
 ### Added
 
 - **Searchable corpus export, optional and off by default** (`scripts/export_corpus.py`,
-  SKILL Step 16, README "Make your lectures searchable"). One course's finished notes
+  SKILL.md "Last step — Searchable corpus", README "Make your lectures searchable"). One course's finished notes
   become a `t2n-corpus/1` lecture folder that
   [vault-search](https://github.com/drpwchen/vault-search/blob/main/docs/corpus-format.md)
   indexes with `server/corpus.py add <root>`: `corpus.json`, one `<course>/` folder with a

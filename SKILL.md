@@ -326,7 +326,7 @@ Compression default is ==H.265 CRF 24== (self-use; `--codec h264` when sharing
 to machines you can't verify). Multi-talk workshops keep their own flow →
 `reference/segmented-mode.md`. → `reference/pipeline.md#web-export`
 
-### Step 16 — Searchable corpus (optional, off by default)
+### Last step — Searchable corpus (optional, off by default)
 
 ```bash
 python <skill-dir>/scripts/export_corpus.py "<note path>" [more notes of the same course] \
@@ -410,7 +410,7 @@ rather than less output (`reference/decisions.md#optional-dependency-degradation
     ├── build_slides_from_pdf.py  build_slides_from_images.py  crop_multiup_pdf.py
     ├── ground_slides.py  flag_asr_suspects.py  make_glossary.py  build_real_words.py
     ├── render_embeds.py  finalize_to_vault.py  audit_note.py  export_web.py
-    ├── export_corpus.py          optional: notes -> t2n-corpus/1 lecture corpus (Step 16)
+    ├── export_corpus.py          optional: notes -> t2n-corpus/1 lecture corpus (last step, optional)
     ├── media_capture_index.py  xcorr_media_offsets.py  query_near_field.py
     ├── _mdpm.py                  AVCHD .MTS recording clock (no container tag)
     ├── adapters/    surya_adapter.py        (production OCR adapters)
